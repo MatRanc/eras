@@ -204,7 +204,9 @@ function compute() {
   const { series, totals, n, base } = buildSeries(state.months, B, mode);
   const eras = detectEras(series, totals, { share, floor: perMonth * B }).slice(0, MAX_ERAS);
   // album eras carry their own art; artist eras borrow the artist's biggest album inside the era
-  const albums = mode === 'artist' ? buildSeries(state.months, B, 'album').series : null;
+  // album charts are always fetched, so they also drive the plays line: same shape in either mode
+  const albumSeries = mode === 'artist' ? buildSeries(state.months, B, 'album') : { series, totals };
+  const albums = albumSeries.series;
   for (const e of eras) {
     if (mode === 'album') {
       [e.artist, e.album] = e.key.split(SEP);
@@ -223,7 +225,7 @@ function compute() {
     e.albumKey = e.artist + SEP + (e.album || '');
     e.share = e.plays / totals.slice(e.start, e.end + 1).reduce((a, b) => a + b, 0);
   }
-  state.view = { B, n, base, totals };
+  state.view = { B, n, base, totals, plays: albumSeries.totals };
   state.eras = eras;
   if (state.sel && !eras.includes(state.sel)) state.sel = eras.find(e => e.key === state.sel.key) || null;
   for (const e of eras) if (e.album && !art.has(e.albumKey)) { art.set(e.albumKey, 'pending'); artQueue.push(e); }
@@ -280,13 +282,13 @@ function render() {
   let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Eras timeline">`;
   // plays per month as a tint block behind the year numbers: a quiet stretch reads flat,
   // a busy one with no eras reads as listening that was spread out
-  const base = AXIS - 8, top = Math.max(1, ...view.totals);
+  const base = AXIS - 8, top = Math.max(1, ...view.plays);
   let d = `M0 ${base}`;
-  view.totals.forEach((t, b) => { d += `V${base - (t ? Math.max(1, (t / top) * 34) : 0)}H${(b + 1) * w}`; });
+  view.plays.forEach((t, b) => { d += `V${base - (t ? Math.max(1, (t / top) * 34) : 0)}H${(b + 1) * w}`; });
   svg += `<path class="vol" d="${d}V${base}Z"/><line class="tick year-line" x1="0" x2="${W}" y1="${base}" y2="${base}"/>`;
-  svg += `<text class="vol-cap" x="6" y="12">Plays / month</text>`;
+  svg += `<text class="vol-cap" x="6" y="12">Plays per ${{ 1: 'month', 2: '2 months', 3: 'quarter', 6: 'half year' }[view.B]}</text>`;
   const bucketLabel = b => { const i = (view.base + b) * view.B; return view.B === 1 ? monthLabel(i) : `${monthLabel(i)} – ${monthLabel(i + view.B - 1)}`; };
-  view.totals.forEach((t, b) => { svg += `<rect x="${b * w}" y="${base - 34}" width="${w}" height="34" fill="transparent"><title>${bucketLabel(b)} · ${t.toLocaleString()} plays</title></rect>`; });
+  view.plays.forEach((t, b) => { svg += `<rect x="${b * w}" y="${base - 34}" width="${w}" height="34" fill="transparent"><title>${bucketLabel(b)} · ${t.toLocaleString()} plays</title></rect>`; });
   for (let b = 0; b < view.n; b++) {
     const start = (view.base + b) * view.B;
     if (start % 12 < view.B) {
