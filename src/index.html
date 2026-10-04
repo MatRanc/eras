@@ -9,6 +9,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=League+Gothic&family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=7">
+  <script>
+    // Google Analytics, only on the live site so local testing isn't counted
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    if (location.hostname === 'eras.matranc.com') {
+      const s = document.createElement('script');
+      s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-Z9GSXJYCH4';
+      document.head.append(s);
+      gtag('js', new Date());
+      gtag('config', 'G-Z9GSXJYCH4');
+    }
+  </script>
 </head>
 <body>
   <header class="jacket" id="jacket">
@@ -72,6 +85,6 @@
 
   <script src="config.js"></script>
   <script src="eras.js?v=5"></script>
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

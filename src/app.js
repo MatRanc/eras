@@ -427,6 +427,7 @@ el.form.addEventListener('submit', async ev => {
   if (!user) return;
   if (!window.LASTFM_KEY) return say('No Last.fm API key configured (src/config.js).', 'error');
   syncURL();
+  gtag('event', 'pull_history', { mode: el.form.mode.value }); // no username: GA forbids personal info
   el.go.disabled = true;
   say(`Looking up ${user}…`);
   try {
