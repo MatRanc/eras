@@ -225,7 +225,11 @@ function compute() {
     e.albumKey = e.artist + SEP + (e.album || '');
     e.share = e.plays / totals.slice(e.start, e.end + 1).reduce((a, b) => a + b, 0);
   }
-  state.view = { B, n, base, totals, plays: albumSeries.totals };
+  // a month whose album chart hasn't loaded (artist mode fetches it last, or the pull stopped) counts its artist chart
+  const plays = mode === 'artist' && state.months.some(m => !m.album)
+    ? buildSeries(state.months.map(m => (m.album ? m : { ...m, album: m.artist })), B, 'album').totals
+    : albumSeries.totals;
+  state.view = { B, n, base, totals, plays };
   state.eras = eras;
   if (state.sel && !eras.includes(state.sel)) state.sel = eras.find(e => e.key === state.sel.key) || null;
   for (const e of eras) if (e.album && !art.has(e.albumKey)) { art.set(e.albumKey, 'pending'); artQueue.push(e); }
