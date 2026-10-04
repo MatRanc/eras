@@ -55,6 +55,18 @@ function detectEras(series, totals, { share, floor }) {
   return eras.sort((a, b) => b.plays - a.plays);
 }
 
+// Keep the N biggest eras per calendar year (by the year an era peaks), so long histories
+// don't starve quiet years and short ones don't overflow. Expects eras sorted by plays, desc.
+function capPerYear(eras, N, B, base) {
+  const used = new Map();
+  return eras.filter(e => {
+    const y = Math.floor((base + e.peakAt) * B / 12);
+    const k = used.get(y) || 0;
+    used.set(y, k + 1);
+    return k < N;
+  });
+}
+
 // Greedy interval packing; keeps one empty bucket between slabs in a lane.
 function assignLanes(eras) {
   const ends = [];
@@ -67,4 +79,4 @@ function assignLanes(eras) {
   return ends.length;
 }
 
-if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, assignLanes };
+if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, capPerYear, assignLanes };

@@ -1,7 +1,6 @@
 const API = 'https://ws.audioscrobbler.com/2.0/';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const FALLBACK = ['#1f5fbf', '#e2541f', '#d9a521', '#2e8b57', '#b8322e', '#7b5ea7'];
-const MAX_ERAS = 40; // ponytail: hard cap keeps the timeline legible; make it a control if people ask
 const $ = s => document.querySelector(s);
 const el = {
   jacket: $('#jacket'), frame: $('#cover-frame'), title: $('#title'), sub: $('#sub'), facts: $('#facts'),
@@ -195,14 +194,14 @@ function hashColor(s) {
 function settings() {
   const s = +el.sens.value; // 1 loose … 9 strict
   const mode = el.form.mode.value;
-  return { mode, B: +el.bucket.value, share: (0.02 + (s - 1) * 0.015) * (mode === 'artist' ? 1.8 : 1), perMonth: 4 + s * 2.5 };
+  return { mode, B: +el.bucket.value, share: (0.02 + (s - 1) * 0.015) * (mode === 'artist' ? 1.8 : 1), perMonth: 4 + s * 2.5, perYear: Math.round(8 - (s - 1) * 0.75) }; // per year: 8 loosest … 2 strictest
 }
 
 function compute() {
   if (!state.months.length) return;
-  const { mode, B, share, perMonth } = settings();
+  const { mode, B, share, perMonth, perYear } = settings();
   const { series, totals, n, base } = buildSeries(state.months, B, mode);
-  const eras = detectEras(series, totals, { share, floor: perMonth * B }).slice(0, MAX_ERAS);
+  const eras = capPerYear(detectEras(series, totals, { share, floor: perMonth * B }), perYear, B, base);
   // album eras carry their own art; artist eras borrow the artist's biggest album inside the era
   const albums = mode === 'artist' ? buildSeries(state.months, B, 'album').series : null;
   for (const e of eras) {

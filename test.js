@@ -1,6 +1,6 @@
 // node test.js
 const assert = require('assert');
-const { SEP, buildSeries, detectEras, assignLanes } = require('./src/eras.js');
+const { SEP, buildSeries, detectEras, capPerYear, assignLanes } = require('./src/eras.js');
 
 // The Life of Pablo shape: big Oct–Jan, dip to 50 Mar–May, back up Jun–Jul, then gone.
 const pablo = [0, 0, 100, 110, 120, 100, 4, 50, 50, 50, 100, 100, 0, 0];
@@ -26,6 +26,10 @@ assert.strictEqual(buildSeries(months, 1, 'artist').series.get('Kanye West')[4],
 // Quick pull: no artist charts, so artist mode falls back to summing albums.
 const quick = months.map(({ idx, album }) => ({ idx, album }));
 assert.strictEqual(buildSeries(quick, 1, 'artist').series.get('Kanye West')[4], 120);
+
+// Per-year cap: a busy year can't crowd out a quiet one. base 2010*12, monthly buckets.
+const yr = [[0, 90], [1, 80], [2, 70], [13, 10]].map(([peakAt, plays]) => ({ peakAt, plays }));
+assert.deepStrictEqual(capPerYear(yr, 2, 1, 2010 * 12).map(e => e.plays), [90, 80, 10]);
 
 // Overlaps go to separate lanes; gaps reuse a lane.
 const ls = [{ start: 0, end: 5 }, { start: 3, end: 8 }, { start: 7, end: 9 }];
