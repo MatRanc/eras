@@ -262,6 +262,7 @@ function spanLabel(e, short) {
 function render() {
   const { eras, view } = state;
   if (!view) return;
+  el.form.classList.add('loaded'); // view settings appear once there is something to view
   const LABEL = 22, BAND = 6, BARS = 46, AXIS = 34, LANE = LABEL + BAND + BARS, GAP = 14;
   const wrap = el.timeline.parentElement;
   const wrapW = wrap.clientWidth - 2 * parseFloat(getComputedStyle(wrap).paddingLeft);
@@ -314,7 +315,7 @@ function render() {
       <span class="p">${e.plays.toLocaleString()}</span>
     </button></li>`).join('');
 
-  if (!eras.length && el.progress.hidden && !el.status.classList.contains('error')) say('No eras at this threshold. Drag it toward loose.');
+  if (!eras.length && el.progress.hidden && !el.status.classList.contains('error')) say('No eras at this sensitivity. Open Adjust and drag toward More eras.');
   show(state.sel || eras[0]);
 }
 
@@ -408,9 +409,13 @@ function syncURL() {
   history.replaceState(null, '', '?' + p);
 }
 
-const sensWords = ['', 'loosest', 'loose', 'loose', 'easy', 'balanced', 'firm', 'strict', 'strict', 'strictest'];
-function controlsChanged() {
+const sensWords = ['', 'loosest', 'looser', 'loose', 'relaxed', 'balanced', 'firm', 'strict', 'stricter', 'strictest'];
+function showSens() {
   el.sensOut.textContent = sensWords[el.sens.value];
+  el.sens.setAttribute('aria-valuetext', sensWords[el.sens.value]);
+}
+function controlsChanged() {
+  showSens();
   if (state.user) { syncURL(); schedule(); }
 }
 el.form.addEventListener('input', ev => {
@@ -421,6 +426,10 @@ el.form.addEventListener('input', ev => {
 });
 window.addEventListener('resize', () => schedule());
 
+const adjustBtn = $('#adjust .toggle');
+adjustBtn.addEventListener('click', () => adjustBtn.setAttribute('aria-expanded', adjustBtn.getAttribute('aria-expanded') !== 'true'));
+
+let submits = 0;
 el.form.addEventListener('submit', async ev => {
   ev.preventDefault();
   const user = el.user.value.trim();
@@ -428,7 +437,10 @@ el.form.addEventListener('submit', async ev => {
   if (!window.LASTFM_KEY) return say('No Last.fm API key configured (src/config.js).', 'error');
   syncURL();
   gtag('event', 'pull_history', { mode: el.form.mode.value }); // no username: GA forbids personal info
+  const mine = ++submits;
   el.go.disabled = true;
+  el.go.textContent = 'Finding…';
+  el.form.setAttribute('aria-busy', 'true');
   say(`Looking up ${user}…`);
   try {
     await load(user);
@@ -437,7 +449,10 @@ el.form.addEventListener('submit', async ev => {
     el.progress.hidden = true;
     say(errorText(e, user), 'error');
   } finally {
+    if (mine !== submits) return; // a newer submit (e.g. switching to Artists) owns the busy state now
     el.go.disabled = false;
+    el.go.textContent = 'Find eras';
+    el.form.removeAttribute('aria-busy');
   }
 });
 
@@ -446,6 +461,6 @@ const q = new URLSearchParams(location.search);
 if (q.get('mode') === 'artist') el.form.mode.value = 'artist';
 if (q.get('b')) el.bucket.value = q.get('b');
 if (q.get('s')) el.sens.value = q.get('s');
-el.sensOut.textContent = sensWords[el.sens.value];
+showSens();
 el.jacket.classList.add('empty');
 if (q.get('user')) { el.user.value = q.get('user'); el.form.requestSubmit(); }

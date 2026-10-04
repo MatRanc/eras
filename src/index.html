@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=League+Gothic&family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=10">
   <script>
     // Google Analytics, only on the live site so local testing isn't counted
     window.dataLayer = window.dataLayer || [];
@@ -43,28 +43,35 @@
       <span>Last.fm username</span>
       <input id="user" name="user" autocomplete="username" autocapitalize="off" spellcheck="false" required placeholder="username">
     </label>
-    <button type="submit" id="go">Pull history</button>
+    <button type="submit" id="go">Find eras</button>
 
     <fieldset class="seg">
       <legend>Eras of</legend>
-      <label><input type="radio" name="mode" value="album" checked><span>Albums</span></label>
-      <label><input type="radio" name="mode" value="artist"><span>Artists</span></label>
+      <div>
+        <label><input type="radio" name="mode" value="album" checked><span>Albums</span></label>
+        <label><input type="radio" name="mode" value="artist"><span>Artists</span></label>
+      </div>
     </fieldset>
 
-    <label class="pick">
-      <span>Bucket</span>
-      <select id="bucket" name="b">
-        <option value="1">1 month</option>
-        <option value="2">2 months</option>
-        <option value="3">Quarter</option>
-        <option value="6">Half year</option>
-      </select>
-    </label>
-
-    <label class="pick range">
-      <span>Threshold <output id="sens-out"></output></span>
-      <input type="range" id="sens" name="s" min="1" max="9" value="5">
-    </label>
+    <div class="adjust" id="adjust">
+      <button type="button" class="toggle" aria-expanded="false" aria-controls="adjust-panel">Adjust</button>
+      <div class="panel" id="adjust-panel">
+        <label class="pick">
+          <span>Group by</span>
+          <select id="bucket" name="b">
+            <option value="1">Month</option>
+            <option value="2">2 months</option>
+            <option value="3">Quarter</option>
+            <option value="6">Half year</option>
+          </select>
+        </label>
+        <label class="pick range">
+          <span>Sensitivity <output id="sens-out" for="sens"></output></span>
+          <input type="range" id="sens" name="s" min="1" max="9" value="5">
+          <span class="ends" aria-hidden="true"><i>More eras</i><i>Fewer eras</i></span>
+        </label>
+      </div>
+    </div>
   </form>
 
   <div class="status" id="status" role="status" aria-live="polite"></div>
@@ -85,6 +92,6 @@
 
   <script src="config.js"></script>
   <script src="eras.js?v=5"></script>
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>

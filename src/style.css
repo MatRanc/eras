@@ -115,7 +115,7 @@ h1.long { font-size: clamp(2.6rem, 5vw, 5rem); }
   padding: 20px var(--gutter);
   border-bottom: 1px solid var(--rule);
 }
-.controls label > span, .seg legend {
+.controls label > span:first-child, .seg legend {
   display: block;
   margin-bottom: 6px;
   font: 700 .72rem/1 var(--ui);
@@ -139,6 +139,7 @@ input, select, button { font: inherit; color: inherit; }
 }
 #user::placeholder { color: #8a8273; }
 #user:focus { outline: none; border-bottom-color: var(--era); background: #23201d; }
+#user:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
 button {
   height: 44px;
   padding: 0 22px;
@@ -155,8 +156,9 @@ button {
 button:hover { background: var(--era); color: var(--era-ink); }
 button:disabled { opacity: .45; cursor: progress; }
 
-.seg { display: flex; margin: 0; padding: 0; border: 0; }
-.seg legend { float: left; width: 100%; }
+.seg { margin: 0; padding: 0; border: 0; min-width: 0; }
+.seg legend { padding: 0; }
+.seg > div { display: flex; }
 .seg label { position: relative; }
 .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .seg label span {
@@ -166,9 +168,10 @@ button:disabled { opacity: .45; cursor: progress; }
   font: 400 1.25rem/1 var(--display);
   text-transform: uppercase;
   letter-spacing: .03em;
-  color: var(--paper-2);
+  color: var(--paper);
   transition: background-color .2s ease-out, color .2s ease-out;
 }
+.seg input:not(:checked):hover + span { background: var(--ink-2); }
 .seg label + label span { border-left: 0; }
 .seg input:checked + span { background: var(--paper); color: var(--ink); border-color: var(--paper); }
 .seg input:focus-visible + span { outline: 3px solid var(--paper); outline-offset: 2px; }
@@ -182,8 +185,36 @@ select {
   appearance: none;
   font-weight: 600;
 }
-.range input { width: 180px; height: 44px; margin: 0; accent-color: var(--paper); background: transparent; }
+.range input { display: block; width: 100%; height: 26px; margin: 0; accent-color: var(--paper); background: transparent; }
 .range output { color: var(--paper); margin-left: 4px; }
+.range .ends { display: flex; justify-content: space-between; height: 18px; font-size: .8rem; line-height: 18px; color: var(--paper-2); } /* slider + ends = 44px, same as the other controls */
+.range .ends i { font-style: normal; }
+
+/* Adjust: view-only tuning, shown once data exists, opens inline to the right */
+.adjust {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 16px 24px;
+  opacity: 0; visibility: hidden;
+  transition: opacity .5s ease-out, visibility .5s;
+}
+.controls.loaded .adjust { opacity: 1; visibility: visible; }
+.adjust .toggle {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 14px;
+  background: none; color: var(--paper);
+  border: 1px solid var(--rule);
+  font-size: 1.25rem;
+}
+.adjust .toggle::after { content: "+"; }
+.adjust .toggle[aria-expanded="true"] { border-color: var(--paper-2); }
+.adjust .toggle[aria-expanded="true"]::after { content: "\2212"; }
+.adjust .toggle:hover { background: var(--ink-2); color: var(--paper); }
+.adjust .panel {
+  display: none; flex-wrap: wrap; align-items: end; gap: 16px 24px;
+  animation: slide-in .35s ease-out;
+}
+.adjust .toggle[aria-expanded="true"] + .panel { display: flex; }
+@keyframes slide-in { from { opacity: 0; transform: translateX(-8px); } }
+.adjust .range { width: 200px; }
 
 .status {
   min-height: 1.5em;
@@ -263,9 +294,7 @@ footer { padding: 24px var(--gutter) 40px; color: var(--paper-2); font-size: .85
   .facts dd { font-size: 1.6rem; }
   .side button { grid-template-columns: 12px minmax(0, 1fr) auto; }
   .side .when { grid-column: 2 / -1; order: -1; }
-  .range input { width: 100%; }
-  .range { flex: 1 1 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; }
+  * { transition: none !important; animation: none !important; }
 }
