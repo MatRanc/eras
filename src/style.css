@@ -248,7 +248,8 @@ progress::-moz-progress-bar { background: var(--paper); }
 .timeline .year { font: 400 20px/1 var(--display); fill: var(--paper); letter-spacing: .02em; }
 .timeline .tick { stroke: var(--rule); }
 .timeline .tick.year-line { stroke: #4a443d; }
-.timeline .vol { fill: var(--paper-2); opacity: .6; }
+.timeline .vol { fill: var(--rule); }
+.timeline .vol-cap { font: 600 10px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; fill: var(--paper-2); }
 .slab { cursor: pointer; outline: none; }
 .slab .band { transition: filter .2s ease-out; }
 .slab .label { font: 400 17px/1 var(--display); text-transform: uppercase; letter-spacing: .02em; fill: var(--paper); pointer-events: none; }
