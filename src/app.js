@@ -1,0 +1,450 @@
+const API = 'https://ws.audioscrobbler.com/2.0/';
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const FALLBACK = ['#1f5fbf', '#e2541f', '#d9a521', '#2e8b57', '#b8322e', '#7b5ea7'];
+const MAX_ERAS = 40; // ponytail: hard cap keeps the timeline legible; make it a control if people ask
+const $ = s => document.querySelector(s);
+const el = {
+  jacket: $('#jacket'), frame: $('#cover-frame'), title: $('#title'), sub: $('#sub'), facts: $('#facts'),
+  form: $('#form'), user: $('#user'), go: $('#go'), bucket: $('#bucket'), sens: $('#sens'), sensOut: $('#sens-out'),
+  status: $('#status'), progress: $('#progress'), timeline: $('#timeline'), side: $('#side'), list: $('#list'),
+};
+
+const state = { user: null, months: [], run: 0, eras: [], sel: null, view: null };
+
+// ── storage (finished months never change, so cache them) ──
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem('eras1:' + k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem('eras1:' + k, JSON.stringify(v)); } catch { /* full or blocked: just refetch */ } },
+};
+
+// ── Last.fm ──
+class ApiError extends Error { constructor(code, msg) { super(msg); this.code = code; } }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Last.fm's limit is per visitor IP: 5 requests/s averaged over 5 minutes. A full pull of
+// a 24-year history is ~580 requests, so bursting at 10/s still averages under 2/s.
+// ponytail: no long-window budget; add one if pulls ever exceed ~1500 requests.
+let nextSlot = 0, gap = 100, onSlow = null;
+async function throttle() {
+  const now = Date.now(), at = Math.max(now, nextSlot);
+  nextSlot = at + gap;
+  await sleep(at - now);
+}
+
+async function call(method, params) {
+  const u = new URL(API);
+  for (const [k, v] of Object.entries({ method, api_key: window.LASTFM_KEY, format: 'json', ...params })) u.searchParams.set(k, v);
+  for (let i = 0; ; i++) {
+    try {
+      await throttle();
+      const j = await (await fetch(u)).json();
+      if (!j.error) { gap = Math.max(100, gap * 0.8); return j; } // recover speed as calls succeed
+      if (j.error === 29) {
+        // rate limited (Last.fm doesn't say whether by IP or by key): back off and say so
+        gap = Math.min(gap * 2, 1600);
+        state.slowed = true;
+        onSlow?.();
+      }
+      if (![8, 11, 16, 29].includes(j.error) || i >= 5) throw new ApiError(j.error, j.message);
+    } catch (e) {
+      if (e instanceof ApiError || i >= 5) throw e;
+    }
+    await sleep(700 * 2 ** i);
+  }
+}
+
+async function pool(items, n, fn) {
+  let next = 0;
+  await Promise.all(Array.from({ length: n }, async () => { while (next < items.length) await fn(items[next++]); }));
+}
+
+function monthsSince(unix) {
+  const d = new Date(unix * 1000), now = new Date();
+  const out = [];
+  for (let idx = d.getUTCFullYear() * 12 + d.getUTCMonth(); idx <= now.getUTCFullYear() * 12 + now.getUTCMonth(); idx++) {
+    const y = Math.floor(idx / 12), m = idx % 12;
+    out.push({ idx, y, m, from: Date.UTC(y, m, 1) / 1000, to: Date.UTC(y, m + 1, 1) / 1000 });
+  }
+  return out;
+}
+
+async function load(user) {
+  const run = ++state.run;
+  const info = (await call('user.getinfo', { user })).user;
+  if (run !== state.run) return;
+  state.user = info.name;
+  state.months = monthsSince(+info.registered.unixtime);
+  state.sel = null;
+  // fetch what the view needs: albums for album eras; artist charts first for artist eras
+  // (albums still follow, for cover art)
+  const modes = el.form.mode.value === 'artist' ? ['artist', 'album'] : ['album'];
+  const keyOf = (mo, mode) => `${info.name.toLowerCase()}:${mo.y}-${mo.m}${mode === 'artist' ? ':ar' : ''}`;
+  // cached months (both kinds) land immediately, so the timeline never blanks while the rest loads
+  for (const mo of state.months) for (const mode of ['album', 'artist']) mo[mode] = store.get(keyOf(mo, mode)) || undefined;
+  const tasks = modes.flatMap(mode => state.months.filter(mo => !mo[mode]).map(mo => ({ mo, mode })));
+  let done = 0;
+  el.progress.hidden = false;
+  el.progress.max = tasks.length;
+  const tick = () => {
+    el.progress.value = done;
+    const t = tasks.find(t => !t.mo[t.mode]);
+    say(t ? `Reading ${info.name}'s ${t.mode}s · ${t.mo.y} · ${done} of ${tasks.length}`
+      + (state.slowed ? ' · Last.fm is rate-limiting requests, so this is going slower' : '') : '', state.slowed && 'warn');
+    schedule();
+  };
+  state.slowed = false;
+  onSlow = tick;
+  tick();
+  const fresh = Date.now() / 1000 - 2 * 86400;
+  await pool(tasks, 5, async ({ mo, mode }) => {
+    if (run !== state.run) return;
+    const j = await call(`user.getweekly${mode}chart`, { user: info.name, from: mo.from, to: mo.to });
+    const items = [].concat(j[`weekly${mode}chart`]?.[mode] || [])
+      .filter(a => +a.playcount >= 2).slice(0, 150)
+      .map(a => (mode === 'album' ? [a.name, a.artist['#text'], +a.playcount] : ['', a.name, +a.playcount]));
+    if (mo.to < fresh) store.set(keyOf(mo, mode), items);
+    if (run !== state.run) return;
+    mo[mode] = items;
+    done++;
+    tick();
+  });
+  if (run !== state.run) return;
+  el.progress.hidden = true;
+  compute();
+  render();
+  centerOn(state.eras[0], 'instant');
+  const plays = (+info.playcount).toLocaleString();
+  say(`${info.name} · ${plays} scrobbles since ${MONTHS[state.months[0].m]} ${state.months[0].y}`);
+}
+
+// ── art + color ──
+const art = new Map(); // key → {url, color} | 'pending'
+
+async function fetchArt(era) {
+  const cacheKey = 'img:' + era.albumKey;
+  let a = store.get(cacheKey);
+  if (!a) {
+    let url = '';
+    try {
+      const j = await call('album.getinfo', { artist: era.artist, album: era.album, autocorrect: 1 });
+      url = (j.album?.image || []).find(i => i.size === 'mega' || i.size === 'extralarge')?.['#text'] || '';
+    } catch { /* missing album: fall through to a palette color */ }
+    a = { url, color: url ? await coverColor(url) : null };
+    store.set(cacheKey, a);
+  }
+  art.set(era.albumKey, a);
+  schedule();
+}
+
+function coverColor(url) {
+  return new Promise(res => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = c.height = 24;
+        const x = c.getContext('2d', { willReadFrequently: true });
+        x.drawImage(img, 0, 0, 24, 24);
+        const d = x.getImageData(0, 0, 24, 24).data;
+        // weight each hue by saturation*value, take the heaviest hue's average color
+        const bins = Array.from({ length: 12 }, () => [0, 0, 0, 0]);
+        for (let i = 0; i < d.length; i += 4) {
+          const [h, s, v] = hsv(d[i], d[i + 1], d[i + 2]);
+          const w = s * v * s;
+          const b = bins[Math.floor(h * 12) % 12];
+          b[0] += d[i] * w; b[1] += d[i + 1] * w; b[2] += d[i + 2] * w; b[3] += w;
+        }
+        const best = bins.reduce((a, b) => (b[3] > a[3] ? b : a));
+        res(best[3] < 6 ? null : vivid(best[0] / best[3], best[1] / best[3], best[2] / best[3]));
+      } catch { res(null); }
+    };
+    img.onerror = () => res(null);
+    img.src = url;
+  });
+}
+
+function hsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d) h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h / 6, max ? d / max : 0, max];
+}
+
+// Push the cover's hue into a flat, printable slab color: saturated, mid-light.
+function vivid(r, g, b) {
+  const [h, s, v] = hsv(r, g, b);
+  const S = Math.max(s, 0.55), V = Math.min(Math.max(v, 0.72), 0.92);
+  const f = n => { const k = (n + h * 6) % 6; return V - V * S * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return '#' + [f(5), f(3), f(1)].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
+}
+
+function inkFor(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(c => (c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.2 ? '#121110' : '#f1eadb';
+}
+
+function hashColor(s) {
+  let h = 0;
+  for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return FALLBACK[Math.abs(h) % FALLBACK.length];
+}
+
+// ── compute ──
+function settings() {
+  const s = +el.sens.value; // 1 loose … 9 strict
+  const mode = el.form.mode.value;
+  return { mode, B: +el.bucket.value, share: (0.02 + (s - 1) * 0.015) * (mode === 'artist' ? 1.8 : 1), perMonth: 4 + s * 2.5 };
+}
+
+function compute() {
+  if (!state.months.length) return;
+  const { mode, B, share, perMonth } = settings();
+  const { series, totals, n, base } = buildSeries(state.months, B, mode);
+  const eras = detectEras(series, totals, { share, floor: perMonth * B }).slice(0, MAX_ERAS);
+  // album eras carry their own art; artist eras borrow the artist's biggest album inside the era
+  const albums = mode === 'artist' ? buildSeries(state.months, B, 'album').series : null;
+  for (const e of eras) {
+    if (mode === 'album') {
+      [e.artist, e.album] = e.key.split(SEP);
+      e.name = e.album; e.by = e.artist;
+    } else {
+      e.artist = e.name = e.key;
+      let best = 0;
+      for (const [k, c] of albums) {
+        if (!k.startsWith(e.key + SEP)) continue;
+        let sum = 0;
+        for (let i = e.start; i <= e.end; i++) sum += c[i];
+        if (sum > best) { best = sum; e.album = k.slice(e.key.length + 1); }
+      }
+      e.by = e.album ? `mostly ${e.album}` : '';
+    }
+    e.albumKey = e.artist + SEP + (e.album || '');
+    e.share = e.plays / totals.slice(e.start, e.end + 1).reduce((a, b) => a + b, 0);
+  }
+  state.view = { B, n, base, totals };
+  state.eras = eras;
+  if (state.sel && !eras.includes(state.sel)) state.sel = eras.find(e => e.key === state.sel.key) || null;
+  for (const e of eras) if (e.album && !art.has(e.albumKey)) { art.set(e.albumKey, 'pending'); artQueue.push(e); }
+  drainArt();
+}
+
+const artQueue = [];
+let artWorkers = 0;
+function drainArt() {
+  while (artWorkers < 3 && artQueue.length) {
+    artWorkers++;
+    fetchArt(artQueue.shift()).finally(() => { artWorkers--; drainArt(); });
+  }
+}
+
+function colorOf(e) {
+  const a = art.get(e.albumKey);
+  return (a && a.color) || hashColor(e.key);
+}
+
+// ── render ──
+let pending = 0;
+function schedule() {
+  if (pending) return;
+  pending = setTimeout(() => { pending = 0; compute(); render(); }, 120);
+}
+
+const monthLabel = idx => `${MONTHS[idx % 12]} ${Math.floor(idx / 12)}`;
+function spanLabel(e, short) {
+  const { B, base } = state.view;
+  const a = (base + e.start) * B, b = (base + e.end) * B + B - 1;
+  const fmt = i => (short ? `${MONTHS[i % 12]} ’${String(Math.floor(i / 12)).slice(2)}` : monthLabel(i));
+  return a === b ? fmt(a) : `${fmt(a)} – ${fmt(b)}`;
+}
+
+function render() {
+  const { eras, view } = state;
+  if (!view) return;
+  const LABEL = 22, BAND = 6, BARS = 46, AXIS = 34, LANE = LABEL + BAND + BARS, GAP = 14;
+  const wrap = el.timeline.parentElement;
+  const wrapW = wrap.clientWidth - 2 * parseFloat(getComputedStyle(wrap).paddingLeft);
+  const w = Math.min(120, Math.max(view.B === 1 ? 14 : 18, wrapW / view.n));
+  // labels sit above their slab and may run past it, so a lane reserves the label's width too
+  // ponytail: League Gothic 17px caps average ~7.6px/char; measure with canvas if labels ever collide
+  const labelOf = e => (e.name.length > 32 ? e.name.slice(0, 31) + '…' : e.name);
+  const spans = eras.map(e => ({ e, start: e.start, end: Math.max(e.end, e.start + Math.ceil((labelOf(e).length * 7.6 + 10) / w) - 1) }));
+  const nLanes = assignLanes(spans);
+  for (const x of spans) x.e.lane = x.lane;
+  const W = Math.ceil(w * view.n), H = AXIS + Math.max(1, nLanes) * (LANE + GAP);
+  const max = Math.max(1, ...eras.flatMap(e => e.counts));
+  const esc = s => s.replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
+
+  let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Eras timeline">`;
+  for (let b = 0; b < view.n; b++) {
+    const start = (view.base + b) * view.B;
+    if (start % 12 < view.B) {
+      const x = b * w;
+      svg += `<line class="tick year-line" x1="${x}" x2="${x}" y1="${AXIS - 8}" y2="${H}"/>`;
+      svg += `<text class="year" x="${x + 6}" y="${AXIS - 14}">${Math.floor((start + view.B - 1) / 12)}</text>`;
+    }
+  }
+  eras.forEach((e, i) => {
+    const color = colorOf(e);
+    const x = e.start * w, y = AXIS + e.lane * (LANE + GAP), ww = (e.end - e.start + 1) * w;
+    svg += `<g class="slab${e === state.sel ? ' sel' : ''}" data-i="${i}" tabindex="0" role="button"
+      aria-label="${esc(`${e.name}${e.artist !== e.name ? ' by ' + e.artist : ''}, ${spanLabel(e)}, ${e.plays.toLocaleString()} plays`)}">
+      <rect class="hit" x="${x}" y="${y}" width="${Math.max(ww, labelOf(e).length * 7.6 + 10)}" height="${LANE}" fill="transparent"/>
+      <text class="label" x="${x}" y="${y + 16}">${esc(labelOf(e))}</text>
+      <rect class="wash" x="${x}" y="${y + LABEL}" width="${ww}" height="${BAND + BARS}" fill="${color}"/>
+      <rect class="band" x="${x}" y="${y + LABEL}" width="${ww}" height="${BAND}" fill="${color}"/>`;
+    e.counts.forEach((c, k) => {
+      const bh = Math.max(1, (c / max) * (BARS - 4));
+      svg += `<rect x="${x + k * w + 1}" y="${y + LANE - bh}" width="${Math.max(1, w - 2)}" height="${bh}" fill="${color}"/>`;
+    });
+    svg += '</g>';
+  });
+  svg += '</svg>';
+  el.timeline.innerHTML = svg;
+  el.timeline.classList.toggle('dim', !!state.sel);
+
+  // era index, chronological
+  el.side.hidden = !eras.length;
+  el.list.innerHTML = [...eras].sort((a, b) => a.start - b.start || b.plays - a.plays).map(e => `
+    <li><button type="button" data-i="${eras.indexOf(e)}" aria-pressed="${e === state.sel}">
+      <span class="sw" style="background:${colorOf(e)}"></span>
+      <span class="when">${spanLabel(e, true)}</span>
+      <span class="n">${esc(e.name)} <small>${esc(e.by)}</small></span>
+      <span class="p">${e.plays.toLocaleString()}</span>
+    </button></li>`).join('');
+
+  if (!eras.length && el.progress.hidden && !el.status.classList.contains('error')) say('No eras at this threshold. Drag it toward loose.');
+  show(state.sel || eras[0]);
+}
+
+let shown = null;
+function show(e) {
+  el.jacket.classList.toggle('empty', !e);
+  if (!e) return;
+  const color = colorOf(e), a = art.get(e.albumKey);
+  el.jacket.style.setProperty('--era', color);
+  el.jacket.style.setProperty('--era-ink', inkFor(color));
+  document.documentElement.style.setProperty('--era', color);
+  document.documentElement.style.setProperty('--era-ink', inkFor(color));
+  const url = a && a.url;
+  const imgs = [...el.frame.querySelectorAll('img')];
+  const top = imgs[imgs.length - 1];
+  if (!url) imgs.forEach(i => i.remove());
+  else if (!top || top.dataset.src !== url) {
+    // covers are multiply-blended, so stacked copies darken: only ever crossfade two
+    imgs.slice(0, -1).forEach(i => i.remove());
+    const next = new Image();
+    next.alt = '';
+    next.dataset.src = url;
+    next.onload = () => {
+      if (!next.isConnected) return;
+      next.classList.add('on');
+      top?.classList.remove('on');
+      setTimeout(() => { if (next.isConnected) next.previousElementSibling?.remove(); }, 500);
+    };
+    next.src = url;
+    el.frame.append(next);
+  }
+  if (shown === e) return;
+  shown = e;
+  el.title.textContent = e.name;
+  el.title.classList.toggle('long', e.name.length > 22);
+  el.sub.textContent = e.artist !== e.name ? e.artist : e.by;
+  el.facts.hidden = false;
+  $('#f-ran').textContent = spanLabel(e);
+  $('#f-plays').textContent = e.plays.toLocaleString();
+  const pk = (state.view.base + e.peakAt) * state.view.B;
+  $('#f-peak').textContent = `${state.view.B === 1 ? monthLabel(pk) : spanLabel({ start: e.peakAt, end: e.peakAt }, true)} · ${e.peak.toLocaleString()}`;
+  $('#f-share').textContent = `${Math.round(e.share * 100)}%`;
+}
+
+function errorText(e, user) {
+  const kept = state.months.some(m => m.album || m.artist) ? ' What loaded so far is saved, so pulling again picks up where it stopped.' : '';
+  switch (e.code) {
+    case 6: return `No Last.fm user called “${user}”. Check the spelling.`;
+    case 17: return `${user} keeps their listening private on Last.fm.`;
+    case 29: return `Last.fm is rate-limiting requests right now, either from your connection or for this site. Wait a few minutes, then pull again.${kept}`;
+    case 26: return 'This site’s Last.fm API key has been suspended by Last.fm. It isn’t anything on your end; check back later.';
+    case 10: return 'This site’s Last.fm API key isn’t valid. It isn’t anything on your end; check back later.';
+    case 8: case 11: case 16: return `Last.fm is having trouble right now. Try again in a few minutes.${kept}`;
+  }
+  return e instanceof ApiError ? `Last.fm said: ${e.message}${kept}` : `Couldn’t reach Last.fm. Check your connection, or Last.fm may be rate-limiting; wait a few minutes and pull again.${kept}`;
+}
+
+function say(msg, kind) { // kind: 'warn' | 'error' | falsy
+  el.status.textContent = msg;
+  el.status.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+// ── wiring ──
+const eraAt = t => { const n = t.closest('[data-i]'); return n ? state.eras[+n.dataset.i] : null; };
+for (const root of [el.timeline, el.list]) {
+  root.addEventListener('pointerover', ev => { const e = eraAt(ev.target); if (e) show(e); });
+  root.addEventListener('focusin', ev => { const e = eraAt(ev.target); if (e) show(e); });
+  root.addEventListener('pointerleave', () => show(state.sel || state.eras[0]));
+  root.addEventListener('click', ev => select(eraAt(ev.target)));
+  root.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('.slab')) { ev.preventDefault(); select(eraAt(ev.target)); } });
+}
+function select(e) {
+  if (!e) return;
+  state.sel = state.sel === e ? null : e;
+  shown = null;
+  render();
+  if (state.sel) {
+    centerOn(e, 'smooth');
+  }
+}
+
+function centerOn(e, behavior) {
+  const g = e && el.timeline.querySelector(`.slab[data-i="${state.eras.indexOf(e)}"]`);
+  if (!g) return;
+  const wrap = el.timeline.parentElement, b = g.getBBox();
+  wrap.scrollTo({ left: b.x + b.width / 2 - wrap.clientWidth / 2, behavior });
+}
+
+function syncURL() {
+  const p = new URLSearchParams({ user: el.user.value.trim(), mode: el.form.mode.value, b: el.bucket.value, s: el.sens.value });
+  history.replaceState(null, '', '?' + p);
+}
+
+const sensWords = ['', 'loosest', 'loose', 'loose', 'easy', 'balanced', 'firm', 'strict', 'strict', 'strictest'];
+function controlsChanged() {
+  el.sensOut.textContent = sensWords[el.sens.value];
+  if (state.user) { syncURL(); schedule(); }
+}
+el.form.addEventListener('input', ev => {
+  if (ev.target === el.user) return;
+  controlsChanged();
+  // artist eras need artist charts: re-run the load; cached months return instantly, only the gap is fetched
+  if (ev.target.name === 'mode' && ev.target.value === 'artist' && state.months.some(m => !m.artist)) el.form.requestSubmit();
+});
+window.addEventListener('resize', () => schedule());
+
+el.form.addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const user = el.user.value.trim();
+  if (!user) return;
+  if (!window.LASTFM_KEY) return say('No Last.fm API key configured (src/config.js).', 'error');
+  syncURL();
+  el.go.disabled = true;
+  say(`Looking up ${user}…`);
+  try {
+    await load(user);
+  } catch (e) {
+    state.run++; // stop the other workers; what loaded stays on screen and in the cache
+    el.progress.hidden = true;
+    say(errorText(e, user), 'error');
+  } finally {
+    el.go.disabled = false;
+  }
+});
+
+// boot from URL
+const q = new URLSearchParams(location.search);
+if (q.get('mode') === 'artist') el.form.mode.value = 'artist';
+if (q.get('b')) el.bucket.value = q.get('b');
+if (q.get('s')) el.sens.value = q.get('s');
+el.sensOut.textContent = sensWords[el.sens.value];
+el.jacket.classList.add('empty');
+if (q.get('user')) { el.user.value = q.get('user'); el.form.requestSubmit(); }

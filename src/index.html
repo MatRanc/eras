@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eras — your Last.fm history, by era</title>
+  <meta name="description" content="Find the albums and artists that ran each stretch of your Last.fm listening history.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=League+Gothic&family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=7">
+</head>
+<body>
+  <header class="jacket" id="jacket">
+    <div class="cover" id="cover-frame" aria-hidden="true"></div>
+    <div class="jacket-text">
+      <h1 id="title">Eras</h1>
+      <p class="sub" id="sub">Your Last.fm history, cut into the albums and artists that ran each season.</p>
+      <dl class="facts" id="facts" hidden>
+        <div><dt>Ran</dt><dd id="f-ran"></dd></div>
+        <div><dt>Plays</dt><dd id="f-plays"></dd></div>
+        <div><dt>Peak</dt><dd id="f-peak"></dd></div>
+        <div><dt>Share of those months</dt><dd id="f-share"></dd></div>
+      </dl>
+    </div>
+  </header>
+
+  <form class="controls" id="form">
+    <label class="user">
+      <span>Last.fm username</span>
+      <input id="user" name="user" autocomplete="username" autocapitalize="off" spellcheck="false" required placeholder="username">
+    </label>
+    <button type="submit" id="go">Pull history</button>
+
+    <fieldset class="seg">
+      <legend>Eras of</legend>
+      <label><input type="radio" name="mode" value="album" checked><span>Albums</span></label>
+      <label><input type="radio" name="mode" value="artist"><span>Artists</span></label>
+    </fieldset>
+
+    <label class="pick">
+      <span>Bucket</span>
+      <select id="bucket" name="b">
+        <option value="1">1 month</option>
+        <option value="2">2 months</option>
+        <option value="3">Quarter</option>
+        <option value="6">Half year</option>
+      </select>
+    </label>
+
+    <label class="pick range">
+      <span>Threshold <output id="sens-out"></output></span>
+      <input type="range" id="sens" name="s" min="1" max="9" value="5">
+    </label>
+  </form>
+
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <progress id="progress" hidden></progress>
+
+  <main>
+    <section class="timeline-wrap" aria-label="Timeline of eras">
+      <div class="timeline" id="timeline"></div>
+    </section>
+
+    <section class="side" id="side" hidden>
+      <h2>Every era, in order</h2>
+      <ol id="list"></ol>
+    </section>
+  </main>
+
+  <footer>Data from <a href="https://www.last.fm/api">Last.fm</a> · <a href="https://github.com/MatRanc/eras">Source</a></footer>
+
+  <script src="config.js"></script>
+  <script src="eras.js?v=5"></script>
+  <script src="app.js?v=10"></script>
+</body>
+</html>
