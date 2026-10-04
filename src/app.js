@@ -263,7 +263,7 @@ function render() {
   const { eras, view } = state;
   if (!view) return;
   el.form.classList.add('loaded'); // view settings appear once there is something to view
-  const LABEL = 22, BAND = 6, BARS = 46, AXIS = 34, LANE = LABEL + BAND + BARS, GAP = 14;
+  const LABEL = 22, BAND = 6, BARS = 46, RAIL = 22, AXIS = 34 + RAIL, LANE = LABEL + BAND + BARS, GAP = 14;
   const wrap = el.timeline.parentElement;
   const wrapW = wrap.clientWidth - 2 * parseFloat(getComputedStyle(wrap).paddingLeft);
   const w = Math.min(120, Math.max(view.B === 1 ? 14 : 18, wrapW / view.n));
@@ -282,10 +282,16 @@ function render() {
     const start = (view.base + b) * view.B;
     if (start % 12 < view.B) {
       const x = b * w;
-      svg += `<line class="tick year-line" x1="${x}" x2="${x}" y1="${AXIS - 8}" y2="${H}"/>`;
-      svg += `<text class="year" x="${x + 6}" y="${AXIS - 14}">${Math.floor((start + view.B - 1) / 12)}</text>`;
+      svg += `<line class="tick year-line" x1="${x}" x2="${x}" y1="${AXIS - RAIL - 8}" y2="${H}"/>`;
+      svg += `<text class="year" x="${x + 6}" y="${AXIS - RAIL - 14}">${Math.floor((start + view.B - 1) / 12)}</text>`;
     }
   }
+  // total plays per bucket, so an empty stretch reads as quiet (flat) or spread out (tall, no eras)
+  const top = Math.max(1, ...view.totals);
+  view.totals.forEach((t, b) => {
+    const h = t ? Math.max(1, (t / top) * (RAIL - 4)) : 0;
+    if (h) svg += `<rect class="vol" x="${b * w + 1}" y="${AXIS - 4 - h}" width="${Math.max(1, w - 2)}" height="${h}"/>`;
+  });
   eras.forEach((e, i) => {
     const color = colorOf(e);
     const x = e.start * w, y = AXIS + e.lane * (LANE + GAP), ww = (e.end - e.start + 1) * w;
