@@ -30,6 +30,9 @@ assert.strictEqual(buildSeries(quick, 1, 'artist').series.get('Kanye West')[4], 
 // Per-year cap: a busy year can't crowd out a quiet one. base 2010*12, monthly buckets.
 const yr = [[0, 90], [1, 80], [2, 70], [13, 10]].map(([peakAt, plays]) => ({ peakAt, plays }));
 assert.deepStrictEqual(capPerYear(yr, 2, 1, 2010 * 12).map(e => e.plays), [90, 80, 10]);
+// ...unless a stricter level already showed it: then it stays.
+const yr2 = yr.map((e, i) => ({ ...e, key: 'k' + i, start: e.peakAt, end: e.peakAt }));
+assert.deepStrictEqual(capPerYear(yr2, 2, 1, 2010 * 12, [yr2[2]]).map(e => e.plays), [90, 80, 70, 10]);
 
 // Overlaps go to separate lanes; gaps reuse a lane.
 const ls = [{ start: 0, end: 5 }, { start: 3, end: 8 }, { start: 7, end: 9 }];

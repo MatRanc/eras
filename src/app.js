@@ -191,17 +191,23 @@ function hashColor(s) {
 }
 
 // ── compute ──
+function level(s, mode) { // 1 loose … 9 strict; per year: 8 loosest … 2 strictest
+  return { share: (0.02 + (s - 1) * 0.015) * (mode === 'artist' ? 1.8 : 1), perMonth: 4 + s * 2.5, perYear: Math.round(8 - (s - 1) * 0.75) };
+}
 function settings() {
-  const s = +el.sens.value; // 1 loose … 9 strict
-  const mode = el.form.mode.value;
-  return { mode, B: +el.bucket.value, share: (0.02 + (s - 1) * 0.015) * (mode === 'artist' ? 1.8 : 1), perMonth: 4 + s * 2.5, perYear: Math.round(8 - (s - 1) * 0.75) }; // per year: 8 loosest … 2 strictest
+  return { mode: el.form.mode.value, B: +el.bucket.value, s: +el.sens.value };
 }
 
 function compute() {
   if (!state.months.length) return;
-  const { mode, B, share, perMonth, perYear } = settings();
+  const { mode, B, s } = settings();
   const { series, totals, n, base } = buildSeries(state.months, B, mode);
-  const eras = capPerYear(detectEras(series, totals, { share, floor: perMonth * B }), perYear, B, base);
+  // walk from strictest down to the chosen level, carrying what each level showed
+  let eras = [];
+  for (let l = 9; l >= s; l--) {
+    const { share, perMonth, perYear } = level(l, mode);
+    eras = capPerYear(detectEras(series, totals, { share, floor: perMonth * B }), perYear, B, base, eras);
+  }
   // album eras carry their own art; artist eras borrow the artist's biggest album inside the era
   const albums = mode === 'artist' ? buildSeries(state.months, B, 'album').series : null;
   for (const e of eras) {

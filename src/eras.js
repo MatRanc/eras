@@ -57,13 +57,16 @@ function detectEras(series, totals, { share, floor }) {
 
 // Keep the N biggest eras per calendar year (by the year an era peaks), so long histories
 // don't starve quiet years and short ones don't overflow. Expects eras sorted by plays, desc.
-function capPerYear(eras, N, B, base) {
+// Eras overlapping one in `keep` (same key) always stay: pass what a stricter level showed,
+// so loosening sensitivity never hides an era.
+function capPerYear(eras, N, B, base, keep = []) {
   const used = new Map();
+  const kept = e => keep.some(f => f.key === e.key && f.start <= e.end && f.end >= e.start);
   return eras.filter(e => {
     const y = Math.floor((base + e.peakAt) * B / 12);
     const k = used.get(y) || 0;
     used.set(y, k + 1);
-    return k < N;
+    return k < N || kept(e);
   });
 }
 
