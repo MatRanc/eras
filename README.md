@@ -4,6 +4,10 @@ Your Last.fm history as a timeline of eras: the albums and artists that ran each
 
 Static, browser-only. https://eras.matranc.com
 
+![Album eras: Utopia by Travis Scott](screenshots/albums.png)
+
+![Artist eras: Arctic Monkeys, Lana Del Rey, Charli xcx](screenshots/artists.png)
+
 ## Run locally
 
 ```sh
