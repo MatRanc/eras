@@ -21,3 +21,7 @@ Open http://localhost:8642. Test the era logic with `node test.js`.
 
 Pushing to `main` deploys `src/` to GitHub Pages. One-time setup: add a repo secret `LASTFM_API_KEY`, and set Settings → Pages → Source to "GitHub Actions".
 The key never lands in a git branch. It's still visible in the live site's network requests, as with any browser-only app.
+
+## License
+
+[AGPL-3.0](LICENSE)
