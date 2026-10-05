@@ -288,7 +288,9 @@ h2 { margin: 0 0 16px; font: 400 2.4rem/1 var(--display); text-transform: upperc
 .side .n small { font-weight: 400; color: var(--paper-2); font-size: .9em; }
 .side .p { color: var(--paper-2); font-size: .9rem; }
 
-footer { padding: 24px var(--gutter) 40px; color: var(--paper-2); font-size: .85rem; border-top: 1px solid var(--rule); }
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; padding: 20px var(--gutter) 32px; border-top: 1px solid var(--rule); color: var(--paper-2); font-size: .85rem; }
+footer a { text-decoration: none; }
+footer a:hover, footer a:focus-visible { color: var(--paper); text-decoration: underline; }
 
 @media (max-width: 760px) {
   .jacket { grid-template-columns: 1fr; height: auto; }
