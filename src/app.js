@@ -53,6 +53,8 @@ async function call(method, params) {
   }
 }
 
+const slowNote = () => (state.slowed ? ' · Last.fm is rate-limiting requests, so this is going slower' : '');
+
 async function pool(items, n, fn) {
   let next = 0;
   await Promise.all(Array.from({ length: n }, async () => { while (next < items.length) await fn(items[next++]); }));
@@ -75,41 +77,45 @@ async function load(user) {
   state.user = info.name;
   state.months = monthsSince(+info.registered.unixtime);
   state.sel = null;
-  // fetch what the view needs: albums for album eras; artist charts first for artist and genre eras
-  // (albums still follow, for cover art)
-  const modes = el.form.mode.value === 'album' ? ['album'] : ['artist', 'album'];
   const keyOf = (mo, mode) => `${info.name.toLowerCase()}:${mo.y}-${mo.m}${mode === 'artist' ? ':ar' : ''}`;
   // cached months (both kinds) land immediately, so the timeline never blanks while the rest loads
   for (const mo of state.months) for (const mode of ['album', 'artist']) mo[mode] = store.get(keyOf(mo, mode)) || undefined;
-  const tasks = modes.flatMap(mode => state.months.filter(mo => !mo[mode]).map(mo => ({ mo, mode })));
-  let done = 0;
   el.progress.hidden = false;
-  el.progress.max = tasks.length;
-  const tick = () => {
-    el.progress.value = done;
-    const t = tasks.find(t => !t.mo[t.mode]);
-    say(t ? `Reading ${info.name}'s ${t.mode}s · ${t.mo.y} · ${done} of ${tasks.length}`
-      + (state.slowed ? ' · Last.fm is rate-limiting requests, so this is going slower' : '') : '', state.slowed && 'warn');
-    schedule();
-  };
   state.slowed = false;
-  onSlow = tick;
-  tick();
   const fresh = Date.now() / 1000 - 2 * 86400;
-  await pool(tasks, 5, async ({ mo, mode }) => {
-    if (run !== state.run) return;
-    const j = await call(`user.getweekly${mode}chart`, { user: info.name, from: mo.from, to: mo.to });
-    const items = [].concat(j[`weekly${mode}chart`]?.[mode] || [])
-      .filter(a => +a.playcount >= 2).slice(0, 150)
-      .map(a => (mode === 'album' ? [a.name, a.artist['#text'], +a.playcount] : ['', a.name, +a.playcount]));
-    if (mo.to < fresh) store.set(keyOf(mo, mode), items);
-    if (run !== state.run) return;
-    mo[mode] = items;
-    done++;
+  const charts = async mode => {
+    const tasks = state.months.filter(mo => !mo[mode]);
+    let done = 0;
+    el.progress.max = tasks.length;
+    const tick = () => {
+      el.progress.value = done;
+      const mo = tasks.find(mo => !mo[mode]);
+      say(mo ? `Reading ${info.name}'s ${mode}s · ${mo.y} · ${done} of ${tasks.length}` + slowNote() : '', state.slowed && 'warn');
+      schedule();
+    };
+    onSlow = tick;
     tick();
-  });
+    await pool(tasks, 5, async mo => {
+      if (run !== state.run) return;
+      const j = await call(`user.getweekly${mode}chart`, { user: info.name, from: mo.from, to: mo.to });
+      const items = [].concat(j[`weekly${mode}chart`]?.[mode] || [])
+        .filter(a => +a.playcount >= 2).slice(0, 150)
+        .map(a => (mode === 'album' ? [a.name, a.artist['#text'], +a.playcount] : ['', a.name, +a.playcount]));
+      if (mo.to < fresh) store.set(keyOf(mo, mode), items);
+      if (run !== state.run) return;
+      mo[mode] = items;
+      done++;
+      tick();
+    });
+  };
+  // fetch in the order the view needs: artist charts (then genre tags) for artist and genre eras;
+  // album charts always follow, for cover art and the plays line
+  const mode = el.form.mode.value;
+  if (mode !== 'album') await charts('artist');
   if (run !== state.run) return;
-  if (el.form.mode.value === 'genre') await loadTags(run);
+  if (mode === 'genre') await loadTags(run);
+  if (run !== state.run) return;
+  await charts('album');
   if (run !== state.run) return;
   el.progress.hidden = true;
   compute();
@@ -128,38 +134,60 @@ const UMBRELLA = new Set(['hip hop', 'rap', 'pop', 'rock', 'electronic', 'altern
 const NARROW = 0.6;
 let genreList = null;
 
+// Last.fm spells some genres its own way ("Hip-Hop", "rnb"); keep each genre's best vote count
+function genresIn(raw, genres) {
+  const t = [], seen = new Set();
+  for (const [name, votes] of raw) {
+    let g = name.toLowerCase();
+    if (!genres.has(g)) g = g === 'rnb' ? 'r&b' : g.replace(/-/g, ' ');
+    if (genres.has(g) && !seen.has(g)) { seen.add(g); t.push([g, votes]); }
+  }
+  return t.slice(0, 5);
+}
+
 async function loadTags(run) {
-  genreList ||= fetch('genres.txt').then(r => r.text()).then(t => new Set(t.split('\n').filter(Boolean)));
+  genreList ||= fetch('genres.txt')
+    .then(r => { if (!r.ok) throw new Error(`genres.txt: ${r.status}`); return r.text(); })
+    .then(t => new Set(t.split('\n').filter(Boolean)), e => { genreList = null; throw e; });
   const genres = await genreList;
-  // only the artists behind 90% of plays: the long tail rarely reaches an era, and each artist is a request
+  // the artists behind 90% of plays, at most 400 (still 88–98% of plays): the long tail rarely
+  // reaches an era, and each artist is a request
   const plays = new Map();
   for (const mo of state.months) for (const [, a, p] of mo.artist || []) plays.set(a, (plays.get(a) || 0) + p);
   const ranked = [...plays].sort((a, b) => b[1] - a[1]);
   const total = ranked.reduce((s, [, p]) => s + p, 0);
   let sum = 0;
-  const top = ranked.filter(([, p]) => (sum += p) - p < total * 0.9).map(([a]) => a);
-  for (const a of top) if (!state.tags.has(a)) { const t = store.get('tags2:' + a); if (t) state.tags.set(a, t); }
+  const top = ranked.filter(([, p]) => (sum += p) - p < total * 0.9).slice(0, 400).map(([a]) => a);
+  // the cache holds Last.fm's raw top tags, filtered on read, so changing the genre rules never needs a reset
+  for (const a of top) if (!state.tags.has(a)) { const raw = store.get('tags3:' + a); if (raw) state.tags.set(a, genresIn(raw, genres)); }
   const todo = top.filter(a => !state.tags.has(a));
+  if (!todo.length) return void (state.tagsUser = state.user);
   let done = 0;
   el.progress.max = todo.length;
-  const tick = () => { el.progress.value = done; say(`Reading genres · ${done} of ${todo.length} artists`); schedule(); };
+  const t0 = Date.now();
+  const tick = () => {
+    el.progress.value = done;
+    // ~3 artists a second in practice; measure once a few are in
+    const min = Math.round((todo.length - done) * (done > 20 ? (Date.now() - t0) / done : 330) / 60000);
+    say(`Sorting ${todo.length} artists into genres · ${min > 1 ? `about ${min} minutes` : 'about a minute'}, only the first time · ${done} done` + slowNote(), state.slowed && 'warn');
+    schedule();
+  };
+  onSlow = tick;
   tick();
   await pool(todo, 5, async a => {
     if (run !== state.run) return;
-    let t = [];
+    let raw;
     try {
       const j = await call('artist.gettoptags', { artist: a, autocorrect: 1 });
-      // Last.fm spells some genres its own way ("Hip-Hop", "rnb"); keep each genre's best vote count
-      const seen = new Set();
-      for (const x of [].concat(j.toptags?.tag || [])) {
-        let g = x.name.toLowerCase();
-        if (!genres.has(g)) g = g === 'rnb' ? 'r&b' : g.replace(/-/g, ' ');
-        if (genres.has(g) && !seen.has(g)) { seen.add(g); t.push([g, +x.count]); }
-        if (t.length === 5) break;
-      }
-    } catch (e) { if (!(e instanceof ApiError && e.code === 6)) throw e; } // 6: Last.fm doesn't know the artist
-    store.set('tags2:' + a, t); // [[genre, votes]]; ponytail: cached forever, add an expiry if genres look stale
-    state.tags.set(a, t);
+      raw = [].concat(j.toptags?.tag || []).slice(0, 10).map(x => [x.name, +x.count]);
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.code === 29) throw e; // offline or rate-limited: stop, as the chart pull does
+      raw = e.code === 6 ? [] : null; // 6: Last.fm doesn't know the artist. Any other error: skip them, retry next load
+    }
+    if (raw) {
+      store.set('tags3:' + a, raw); // ponytail: cached forever, add an expiry if genres look stale
+      state.tags.set(a, genresIn(raw, genres));
+    }
     done++;
     tick();
   });
@@ -230,9 +258,33 @@ function hsv(r, g, b) {
 // Push the cover's hue into a flat, printable slab color: saturated, mid-light.
 function vivid(r, g, b) {
   const [h, s, v] = hsv(r, g, b);
-  const S = Math.max(s, 0.55), V = Math.min(Math.max(v, 0.72), 0.92);
+  return hex(h, Math.max(s, 0.55), Math.min(Math.max(v, 0.72), 0.92));
+}
+
+function hex(h, S, V) {
   const f = n => { const k = (n + h * 6) % 6; return V - V * S * Math.max(0, Math.min(k, 4 - k, 1)); };
   return '#' + [f(5), f(3), f(1)].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
+}
+
+// Genre eras take their color from the genre, never from album art: a fixed hue per family
+// (rap warm, electronic cool), nudged per genre so neighbours in a family still differ.
+// First match wins, so "pop punk" is rock and "emo rap" is rap.
+const FAMILIES = [
+  [/metal|hardcore|core$|grind|djent|sludge|doom/, 0],
+  [/hip hop|rap|trap|drill|grime|phonk|crunk|boom bap/, 24],
+  [/rock|punk|emo|grunge|shoegaze|indie|alternative|post/, 45],
+  [/folk|country|americana|bluegrass|singer/, 90],
+  [/soul|r&b|jazz|blues|funk|gospel|disco|bossa|samba|reggae/, 150],
+  [/electr|house|techno|ambient|idm|edm|trance|dub|drum and bass|synth|wave|garage|break|chiptune/, 205],
+  [/classical|orchestra|soundtrack|opera|baroque|choral|minimal/, 262],
+  [/pop/, 318],
+];
+function genreColor(g) {
+  let h = 0;
+  for (const ch of g) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  h = Math.abs(h);
+  const hue = FAMILIES.find(([re]) => re.test(g))?.[1] ?? h % 360;
+  return hex((((hue + (h % 25) - 12) % 360) + 360) % 360 / 360, 0.62, 0.74 + (h >> 5) % 4 * 0.06);
 }
 
 function inkFor(hex) {
@@ -250,52 +302,69 @@ function hashColor(s) {
 function settings() {
   const s = +el.sens.value; // 1 loose … 9 strict
   const mode = el.form.mode.value;
-  // genres: an era is a stretch at 1.4× the genre's usual share. Raising that bar only leaves
-  // short spikes, so strictness instead asks for longer eras (1 → 5 months) and lets a run
-  // ride out longer dips (1 → 4 months), which joins stretches a few months apart
+  // genres: an era is a stretch at 1.4× the genre's usual share. Strictness only asks for longer
+  // eras (2 → 6 months) that ride out longer dips (2 → 4 months): moving the bar too would let
+  // the loose end join eras the strict end keeps apart, since more months between them clear it.
+  // Under three years there's no usual share to measure against, so only the share bar applies.
   if (mode === 'genre') {
     const B = +el.bucket.value;
-    return { mode, B, share: 0.05, lift: 1.4, perMonth: 4, quiet: Math.max(1, Math.round((1 + Math.floor(s / 3)) / B)), minLen: Math.ceil((1 + (s - 1) * 0.5) / B) };
+    const lift = state.months.length < 36 ? 0 : 1.4;
+    return { mode, B, share: 0.05, lift, ramp: false, perMonth: 4, quiet: Math.max(1, Math.round((1 + Math.floor((s + 2) / 3)) / B)), minLen: Math.ceil((2 + Math.floor(s / 2)) / B) };
   }
   return { mode, B: +el.bucket.value, share: (0.02 + (s - 1) * 0.015) * (mode === 'artist' ? 1.8 : 1), perMonth: 4 + s * 2.5 };
 }
 
 function compute() {
   if (!state.months.length) return;
-  const { mode, B, share, lift, quiet, minLen, perMonth } = settings();
+  const { mode, B, share, lift, ramp, quiet, minLen, perMonth } = settings();
   const { series, totals, n, base } = buildSeries(mode === 'genre' ? genreMonths(state.months, genreOf) : state.months, B, mode === 'album' ? 'album' : 'artist');
   series.delete(''); // untagged artists' plays, kept only in the totals
-  const eras = detectEras(series, totals, { share, lift, gap: quiet, minLen, floor: perMonth * B }).slice(0, MAX_ERAS);
+  let eras = detectEras(series, totals, { share, lift, ramp, gap: quiet, minLen, floor: perMonth * B });
   // album eras carry their own art; artist eras borrow the artist's biggest album inside the era,
-  // genre eras the biggest album of the genre's biggest artist inside the era
+  // genre eras show the biggest albums of the genre's top artists inside the era
   // album charts are always fetched, so they also drive the plays line: same shape in any mode
   const albumSeries = mode === 'album' ? { series, totals } : buildSeries(state.months, B, 'album');
   const albums = albumSeries.series;
-  const artists = mode === 'genre' ? buildSeries(state.months, B, 'artist').series : null;
+  const sumIn = (c, e) => { let s = 0; for (let i = e.start; i <= e.end; i++) s += c[i]; return s; };
   const biggest = (map, e, ok) => {
     let best = 0, key;
     for (const [k, c] of map) {
       if (!ok(k)) continue;
-      let sum = 0;
-      for (let i = e.start; i <= e.end; i++) sum += c[i];
+      const sum = sumIn(c, e);
       if (sum > best) { best = sum; key = k; }
     }
     return key;
   };
+  const albumOf = (artist, e) => { const k = biggest(albums, e, k => k.startsWith(artist + SEP)); return k && k.slice(artist.length + 1); };
+  if (mode === 'genre') {
+    // who played each era, biggest first. Eras one artist carries (≥80% of plays) only repeat
+    // artist mode, so drop them
+    const byGenre = Map.groupBy(buildSeries(state.months, B, 'artist').series, ([a]) => genreOf(a));
+    eras = eras.map(e => ({
+      ...e, artists: byGenre.get(e.key).map(([a, c]) => [a, sumIn(c, e)]).filter(([, p]) => p).sort((a, b) => b[1] - a[1]),
+    })).filter(e => e.artists[0][1] < 0.8 * e.plays);
+  }
+  eras = eras.slice(0, MAX_ERAS);
+  const all = totals.reduce((a, b) => a + b, 0);
   for (const e of eras) {
+    e.share = e.plays / totals.slice(e.start, e.end + 1).reduce((a, b) => a + b, 0);
     if (mode === 'album') {
       [e.artist, e.album] = e.key.split(SEP);
       e.name = e.album; e.by = e.artist;
-    } else {
+    } else if (mode === 'genre') {
+      e.genre = true;
       e.name = e.key;
-      e.artist = mode === 'genre' ? biggest(artists, e, a => genreOf(a) === e.key) || '' : e.key;
-      const k = e.artist && biggest(albums, e, k => k.startsWith(e.artist + SEP));
-      e.album = k && k.slice(e.artist.length + 1);
-      e.genre = mode === 'genre';
-      e.by = e.genre ? (e.artist ? `mostly ${e.artist}` : '') : e.album ? `mostly ${e.album}` : '';
+      e.artist = e.artists[0][0];
+      e.by = e.artists.slice(0, 3).map(([a]) => a).join(', ') + (e.artists.length > 3 ? ` · 3 of ${e.artists.length} artists` : '');
+      e.tiles = e.artists.slice(0, 4).map(([artist]) => { const album = albumOf(artist, e); return { artist, album, albumKey: artist + SEP + album }; });
+      // how far above the genre's usual share the era ran; short histories have no usual share
+      if (lift) e.lift = e.share / (series.get(e.key).reduce((a, b) => a + b, 0) / all);
+    } else {
+      e.name = e.artist = e.key;
+      e.album = albumOf(e.artist, e);
+      e.by = e.album ? `mostly ${e.album}` : '';
     }
     e.albumKey = e.artist + SEP + (e.album || '');
-    e.share = e.plays / totals.slice(e.start, e.end + 1).reduce((a, b) => a + b, 0);
   }
   // a month whose album chart hasn't loaded (artist mode fetches it last, or the pull stopped) counts its artist chart
   const plays = mode !== 'album' && state.months.some(m => !m.album)
@@ -304,7 +373,13 @@ function compute() {
   state.view = { B, n, base, totals, plays };
   state.eras = eras;
   if (state.sel && !eras.includes(state.sel)) state.sel = eras.find(e => e.key === state.sel.key) || null;
-  for (const e of eras) if (e.album && !art.has(e.albumKey)) { art.set(e.albumKey, 'pending'); artQueue.push(e); }
+  for (const e of eras) wantArt(e); // genre eras ask for their tiles' art only when shown
+}
+
+function wantArt(x) {
+  if (!x.album || art.has(x.albumKey)) return;
+  art.set(x.albumKey, 'pending');
+  artQueue.push(x);
   drainArt();
 }
 
@@ -318,6 +393,7 @@ function drainArt() {
 }
 
 function colorOf(e) {
+  if (e.genre) return genreColor(e.key);
   const a = art.get(e.albumKey);
   return (a && a.color) || hashColor(e.key);
 }
@@ -350,8 +426,18 @@ function render() {
   // ponytail: League Gothic 17px caps average ~7.6px/char; measure with canvas if labels ever collide
   const labelOf = e => (e.name.length > 32 ? e.name.slice(0, 31) + '…' : e.name);
   const spans = eras.map(e => ({ e, start: e.start, end: Math.max(e.end, e.start + Math.ceil((labelOf(e).length * 7.6 + 10) / minW) - 1) }));
-  const nLanes = assignLanes(spans);
-  for (const x of spans) x.e.lane = x.lane;
+  // genre eras: one row per genre, so its comebacks line up and the rows read as taste shifting
+  // (a comeback that starts under the previous era's label takes a second row)
+  // ponytail: a comeback close behind its own label can collide with it; nudge labels if that shows up
+  const rows = [];
+  for (const g of eras[0]?.genre ? Map.groupBy(spans, x => x.e.key).values() : spans.map(x => [x])) {
+    assignLanes(g);
+    const sub = [];
+    for (const x of g) (sub[x.lane] ||= []).push(x);
+    for (const r of sub) rows.push({ g: r, start: Math.min(...r.map(x => x.start)), end: Math.max(...r.map(x => x.end)) });
+  }
+  const nLanes = assignLanes(rows);
+  for (const r of rows) for (const x of r.g) x.e.lane = r.lane;
   const W = Math.ceil(w * view.n), H = AXIS + Math.max(1, nLanes) * (LANE + GAP);
   const max = Math.max(1, ...eras.flatMap(e => e.counts));
   const esc = s => s.replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
@@ -403,7 +489,7 @@ function render() {
       <span class="p">${e.plays.toLocaleString()}</span>
     </button></li>`).join('');
 
-  if (!eras.length && el.progress.hidden && !el.status.classList.contains('error')) say('No eras at this sensitivity. Open Adjust and drag toward More eras.');
+  if (!eras.length && el.progress.hidden && !el.status.classList.contains('error')) say(`No eras at this setting. Open Adjust and drag toward ${$('#sens-lo').textContent}.`);
   show(state.sel || eras[0]);
 }
 
@@ -416,24 +502,38 @@ function show(e) {
   el.jacket.style.setProperty('--era-ink', inkFor(color));
   document.documentElement.style.setProperty('--era', color);
   document.documentElement.style.setProperty('--era-ink', inkFor(color));
-  const url = a && a.url;
-  const imgs = [...el.frame.querySelectorAll('img')];
-  const top = imgs[imgs.length - 1];
-  if (!url) imgs.forEach(i => i.remove());
-  else if (!top || top.dataset.src !== url) {
-    // covers are multiply-blended, so stacked copies darken: only ever crossfade two
-    imgs.slice(0, -1).forEach(i => i.remove());
-    const next = new Image();
-    next.alt = '';
-    next.dataset.src = url;
-    next.onload = () => {
-      if (!next.isConnected) return;
-      next.classList.add('on');
-      top?.classList.remove('on');
-      setTimeout(() => { if (next.isConnected) next.previousElementSibling?.remove(); }, 500);
-    };
-    next.src = url;
-    el.frame.append(next);
+  const mosaic = el.frame.querySelector('.mosaic');
+  const imgs = [...el.frame.querySelectorAll(':scope > img')];
+  const top = imgs[imgs.length - 1], url = a && a.url;
+  if (e.genre) {
+    // a genre era is about the genre, not one artist: show its top artists' covers, up to four
+    imgs.forEach(i => i.remove());
+    e.tiles.forEach(wantArt);
+    const urls = e.tiles.map(t => art.get(t.albumKey)?.url).filter(Boolean);
+    if (mosaic?.dataset.urls !== urls.join(' ')) {
+      const m = Object.assign(document.createElement('div'), { className: 'mosaic' });
+      m.dataset.urls = urls.join(' ');
+      m.append(...urls.map(src => Object.assign(new Image(), { alt: '', src })));
+      if (mosaic) mosaic.replaceWith(m); else el.frame.append(m);
+    }
+  } else {
+    mosaic?.remove();
+    if (!url) imgs.forEach(i => i.remove());
+    else if (!top || top.dataset.src !== url) {
+      // covers are multiply-blended, so stacked copies darken: only ever crossfade two
+      imgs.slice(0, -1).forEach(i => i.remove());
+      const next = new Image();
+      next.alt = '';
+      next.dataset.src = url;
+      next.onload = () => {
+        if (!next.isConnected) return;
+        next.classList.add('on');
+        top?.classList.remove('on');
+        setTimeout(() => { if (next.isConnected) next.previousElementSibling?.remove(); }, 500);
+      };
+      next.src = url;
+      el.frame.append(next);
+    }
   }
   if (shown === e) return;
   shown = e;
@@ -445,7 +545,9 @@ function show(e) {
   $('#f-plays').textContent = e.plays.toLocaleString();
   const pk = (state.view.base + e.peakAt) * state.view.B;
   $('#f-peak').textContent = `${state.view.B === 1 ? monthLabel(pk) : spanLabel({ start: e.peakAt, end: e.peakAt }, true)} · ${e.peak.toLocaleString()}`;
-  $('#f-share').textContent = `${Math.round(e.share * 100)}%`;
+  // genre eras are built on lift, and a 7% share would read as a failure in a header about dominance
+  $('#f-share-name').textContent = e.lift ? 'Vs. your usual' : 'Share of those months';
+  $('#f-share').textContent = e.lift ? `${e.lift < 10 ? e.lift.toFixed(1) : Math.round(e.lift)}×` : `${Math.round(e.share * 100)}%`;
 }
 
 function errorText(e, user) {
@@ -498,9 +600,15 @@ function syncURL() {
 }
 
 const sensWords = ['', 'loosest', 'looser', 'loose', 'relaxed', 'balanced', 'firm', 'strict', 'stricter', 'strictest'];
+// in genre mode the slider mostly sets how long an era must run, so it says that
 function showSens() {
-  el.sensOut.textContent = sensWords[el.sens.value];
-  el.sens.setAttribute('aria-valuetext', sensWords[el.sens.value]);
+  const genre = el.form.mode.value === 'genre';
+  const v = genre ? `≥ ${settings().minLen * +el.bucket.value} months` : sensWords[el.sens.value];
+  el.sensOut.textContent = v;
+  el.sens.setAttribute('aria-valuetext', v);
+  $('#sens-name').textContent = genre ? 'Era length' : 'Sensitivity';
+  $('#sens-lo').textContent = genre ? 'Short bursts' : 'More eras';
+  $('#sens-hi').textContent = genre ? 'Long phases' : 'Fewer eras';
 }
 function controlsChanged() {
   showSens();

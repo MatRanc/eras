@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=League+Gothic&family=Archivo:wdth,wght@62..125,400..800&family=Yanone+Kaffeesatz:wght@600&family=Sofia+Sans+Extra+Condensed:wght@700&family=Roboto+Flex:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=19">
+  <link rel="stylesheet" href="style.css?v=20">
   <script>
     // Google Analytics, only on the live site so local testing isn't counted
     window.dataLayer = window.dataLayer || [];
@@ -33,7 +33,7 @@
         <div><dt>Ran</dt><dd id="f-ran"></dd></div>
         <div><dt>Plays</dt><dd id="f-plays"></dd></div>
         <div><dt>Peak</dt><dd id="f-peak"></dd></div>
-        <div><dt>Share of those months</dt><dd id="f-share"></dd></div>
+        <div><dt id="f-share-name">Share of those months</dt><dd id="f-share"></dd></div>
       </dl>
     </div>
   </header>
@@ -50,6 +50,7 @@
       <div>
         <label><input type="radio" name="mode" value="album" checked><span>Albums</span></label>
         <label><input type="radio" name="mode" value="artist"><span>Artists</span></label>
+        <label><input type="radio" name="mode" value="genre"><span>Genres</span></label>
       </div>
     </fieldset>
 
@@ -66,9 +67,9 @@
           </select>
         </label>
         <label class="pick range">
-          <span>Sensitivity <output id="sens-out" for="sens"></output></span>
+          <span><span id="sens-name">Sensitivity</span> <output id="sens-out" for="sens"></output></span>
           <input type="range" id="sens" name="s" min="1" max="9" value="5">
-          <span class="ends" aria-hidden="true"><i>More eras</i><i>Fewer eras</i></span>
+          <span class="ends" aria-hidden="true"><i id="sens-lo">More eras</i><i id="sens-hi">Fewer eras</i></span>
         </label>
       </div>
     </div>
@@ -91,7 +92,7 @@
   <footer><span>Powered by <a href="https://www.last.fm/api">Last.fm</a> · <a href="https://github.com/MatRanc/eras">Code on GitHub</a></span><span>Made with ❤️ in 🇨🇦</span></footer>
 
   <script src="config.js"></script>
-  <script src="eras.js?v=5"></script>
-  <script src="app.js?v=22"></script>
+  <script src="eras.js?v=8"></script>
+  <script src="app.js?v=26"></script>
 </body>
 </html>

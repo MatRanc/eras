@@ -49,15 +49,23 @@ a { color: inherit; text-underline-offset: .2em; }
 }
 /* duotone: grayscale art multiplied into the era color */
 .cover img {
-  position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
   filter: grayscale(1) contrast(1.25) brightness(1.05);
   mix-blend-mode: multiply;
+}
+.cover > img {
+  position: absolute; inset: 0;
   opacity: 0;
   transition: opacity .5s ease-out;
 }
-.cover img.on { opacity: 1; }
+.cover > img.on { opacity: 1; }
+/* genre eras: their top artists' covers, 1 to 4 tiles filling the square */
+.mosaic { position: absolute; inset: 0; display: grid; grid-template: 1fr 1fr / 1fr 1fr; }
+.mosaic img { min-height: 0; }
+.mosaic img:only-child { grid-area: span 2 / span 2; }
+.mosaic img:first-child:nth-last-child(2), .mosaic img:first-child:nth-last-child(2) + img { grid-row: span 2; }
+.mosaic img:nth-child(3):last-child { grid-column: span 2; }
 .jacket.empty .cover {
   background:
     linear-gradient(var(--ink) 0 0) 18% 0 / 22% 100% no-repeat,

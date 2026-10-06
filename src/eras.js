@@ -29,23 +29,33 @@ function buildSeries(months, B, mode) {
 // An era is a run of buckets where an entity clears both an absolute floor and a share
 // of everything played that bucket. One quiet bucket inside a run doesn't break it,
 // and the run widens to take in the ramp-up/taper (buckets at half the floor).
-function detectEras(series, totals, { share, floor }) {
+// With `lift`, the share bar is also lift× the entity's own long-run share: genres are a
+// steady baseline, so their eras are the stretches well above it. That bar stops at 10 points
+// over the usual share, or a genre that is most of someone's listening could never form an era.
+// `ramp: false` skips the ramp, since a steady genre sits above half the floor almost everywhere.
+// `gap` is how many quiet buckets a run survives, `minLen` the fewest buckets an era may span.
+function detectEras(series, totals, { share, floor, lift, ramp = !lift, gap: maxGap = 1, minLen = 1 }) {
   const eras = [];
-  const hot = (c, i) => c[i] >= floor && c[i] >= share * totals[i];
+  const all = totals.reduce((a, b) => a + b, 0) || 1;
   for (const [key, c] of series) {
     const n = c.length;
+    const usual = c.reduce((a, b) => a + b, 0) / all;
+    const bar = lift ? Math.max(share, Math.min(lift * usual, usual + 0.1)) : share;
+    const hot = i => c[i] >= floor && c[i] >= bar * totals[i];
     let i = 0;
     while (i < n) {
-      if (!hot(c, i)) { i++; continue; }
+      if (!hot(i)) { i++; continue; }
       let s = i, e = i, gap = 0;
       for (let j = i + 1; j < n; j++) {
-        if (hot(c, j)) { e = j; gap = 0; } else if (++gap > 1) break;
+        if (hot(j)) { e = j; gap = 0; } else if (++gap > maxGap) break;
       }
-      while (s > 0 && c[s - 1] >= floor / 2) s--;
-      while (e < n - 1 && c[e + 1] >= floor / 2) e++;
+      if (ramp) {
+        while (s > 0 && c[s - 1] >= floor / 2) s--;
+        while (e < n - 1 && c[e + 1] >= floor / 2) e++;
+      }
       const counts = c.slice(s, e + 1);
       const plays = counts.reduce((a, b) => a + b, 0);
-      if (plays >= floor * 3) {
+      if (plays >= floor * 3 && counts.length >= minLen) {
         const pk = counts.indexOf(Math.max(...counts));
         eras.push({ key, start: s, end: e, counts, plays, peak: counts[pk], peakAt: s + pk });
       }
@@ -67,4 +77,15 @@ function assignLanes(eras) {
   return ends.length;
 }
 
-if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, assignLanes };
+// Artist charts → genre charts. genreOf(artist) returns a genre, or '' for untagged artists:
+// their plays still count toward each bucket's total, so drop the '' series before detecting.
+function genreMonths(months, genreOf) {
+  return months.map(mo => {
+    if (!mo.artist) return { idx: mo.idx };
+    const sums = new Map();
+    for (const [, a, p] of mo.artist) { const g = genreOf(a); sums.set(g, (sums.get(g) || 0) + p); }
+    return { idx: mo.idx, artist: [...sums].map(([g, p]) => ['', g, p]) };
+  });
+}
+
+if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, assignLanes, genreMonths };
