@@ -34,7 +34,7 @@ function buildSeries(months, B, mode) {
 // over the usual share, or a genre that is most of someone's listening could never form an era.
 // `ramp: false` skips the ramp, since a steady genre sits above half the floor almost everywhere.
 // `gap` is how many quiet buckets a run survives, `minLen` the fewest buckets an era may span.
-function detectEras(series, totals, { share, floor, lift, ramp = !lift, gap: maxGap = 1, minLen = 1 }) {
+function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxGap = 1, minLen = 1 }) {
   const eras = [];
   const all = totals.reduce((a, b) => a + b, 0) || 1;
   for (const [key, c] of series) {

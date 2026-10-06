@@ -55,6 +55,13 @@ async function call(method, params) {
 
 const slowNote = () => (state.slowed ? ' · Last.fm is rate-limiting requests, so this is going slower' : '');
 
+// Map.groupBy, which iOS Safari only has from 17.4
+function groupBy(items, key) {
+  const m = new Map();
+  for (const x of items) { const k = key(x); if (m.has(k)) m.get(k).push(x); else m.set(k, [x]); }
+  return m;
+}
+
 async function pool(items, n, fn) {
   let next = 0;
   await Promise.all(Array.from({ length: n }, async () => { while (next < items.length) await fn(items[next++]); }));
@@ -130,16 +137,17 @@ async function load(user) {
 // tags like "seen live". Umbrella genres lose to a narrower tag with at least NARROW of the
 // top genre's votes, or one "hip hop" era would cover a whole history; the vote bar keeps
 // stray and joke tags (Justin Bieber's "black metal" sits at 58%) from winning.
-const UMBRELLA = new Set(['hip hop', 'rap', 'pop', 'rock', 'electronic', 'alternative', 'alternative rock', 'indie', 'dance', 'metal', 'folk', 'jazz', 'soul', 'r&b', 'country', 'classical', 'punk', 'singer-songwriter', 'experimental', 'instrumental']);
+const UMBRELLA = new Set(['hip hop', 'pop', 'rock', 'electronic', 'alternative rock', 'dance', 'metal', 'folk', 'jazz', 'soul', 'r&b', 'country', 'classical', 'punk', 'singer-songwriter', 'experimental', 'instrumental']);
 const NARROW = 0.6;
 let genreList = null;
 
-// Last.fm spells some genres its own way ("Hip-Hop", "rnb"); keep each genre's best vote count
+// Last.fm spells some genres its own way ("Hip-Hop", "rnb", "kpop"); keep each genre's best vote count
+const SPELLING = { rnb: 'r&b', kpop: 'k-pop', synthpop: 'synth-pop' };
 function genresIn(raw, genres) {
   const t = [], seen = new Set();
   for (const [name, votes] of raw) {
     let g = name.toLowerCase();
-    if (!genres.has(g)) g = g === 'rnb' ? 'r&b' : g.replace(/-/g, ' ');
+    if (!genres.has(g)) g = SPELLING[g] || g.replace(/-/g, ' ');
     if (genres.has(g) && !seen.has(g)) { seen.add(g); t.push([g, votes]); }
   }
   return t.slice(0, 5);
@@ -158,7 +166,8 @@ async function loadTags(run) {
   const total = ranked.reduce((s, [, p]) => s + p, 0);
   let sum = 0;
   const top = ranked.filter(([, p]) => (sum += p) - p < total * 0.9).slice(0, 400).map(([a]) => a);
-  // the cache holds Last.fm's raw top tags, filtered on read, so changing the genre rules never needs a reset
+  // the cache holds Last.fm's raw top 10 tags, filtered on read, so changing the genre rules needs no reset
+  // (only reading past tag 10 would)
   for (const a of top) if (!state.tags.has(a)) { const raw = store.get('tags3:' + a); if (raw) state.tags.set(a, genresIn(raw, genres)); }
   const todo = top.filter(a => !state.tags.has(a));
   if (!todo.length) return void (state.tagsUser = state.user);
@@ -181,7 +190,8 @@ async function loadTags(run) {
       const j = await call('artist.gettoptags', { artist: a, autocorrect: 1 });
       raw = [].concat(j.toptags?.tag || []).slice(0, 10).map(x => [x.name, +x.count]);
     } catch (e) {
-      if (!(e instanceof ApiError) || e.code === 29) throw e; // offline or rate-limited: stop, as the chart pull does
+      // offline, rate-limited or a bad API key: stop, as the chart pull does
+      if (!(e instanceof ApiError) || [10, 26, 29].includes(e.code)) throw e;
       raw = e.code === 6 ? [] : null; // 6: Last.fm doesn't know the artist. Any other error: skip them, retry next load
     }
     if (raw) {
@@ -268,8 +278,9 @@ function hex(h, S, V) {
 
 // Genre eras take their color from the genre, never from album art: a fixed hue per family
 // (rap warm, electronic cool), nudged per genre so neighbours in a family still differ.
-// First match wins, so "pop punk" is rock and "emo rap" is rap.
+// First match wins, so "pop punk" is rock, "emo rap" is rap and "breakcore" isn't metal.
 const FAMILIES = [
+  [/breakcore|nightcore/, 205],
   [/metal|hardcore|core$|grind|djent|sludge|doom/, 0],
   [/hip hop|rap|trap|drill|grime|phonk|crunk|boom bap/, 24],
   [/rock|punk|emo|grunge|shoegaze|indie|alternative|post/, 45],
@@ -339,7 +350,8 @@ function compute() {
   if (mode === 'genre') {
     // who played each era, biggest first. Eras one artist carries (≥80% of plays) only repeat
     // artist mode, so drop them
-    const byGenre = Map.groupBy(buildSeries(state.months, B, 'artist').series, ([a]) => genreOf(a));
+    // only months with artist charts, as genreMonths counts them (no estimate from album charts)
+    const byGenre = groupBy(buildSeries(state.months.map(m => (m.artist ? m : { idx: m.idx })), B, 'artist').series, ([a]) => genreOf(a));
     eras = eras.map(e => ({
       ...e, artists: byGenre.get(e.key).map(([a, c]) => [a, sumIn(c, e)]).filter(([, p]) => p).sort((a, b) => b[1] - a[1]),
     })).filter(e => e.artists[0][1] < 0.8 * e.plays);
@@ -355,7 +367,7 @@ function compute() {
       e.genre = true;
       e.name = e.key;
       e.artist = e.artists[0][0];
-      e.by = e.artists.slice(0, 3).map(([a]) => a).join(', ') + (e.artists.length > 3 ? ` · 3 of ${e.artists.length} artists` : '');
+      e.by = e.artists.slice(0, 3).map(([a]) => a).join(', ') + (e.artists.length > 3 ? ` and\u00a0${e.artists.length - 3}\u00a0more` : '');
       e.tiles = e.artists.slice(0, 4).map(([artist]) => { const album = albumOf(artist, e); return { artist, album, albumKey: artist + SEP + album }; });
       // how far above the genre's usual share the era ran; short histories have no usual share
       if (lift) e.lift = e.share / (series.get(e.key).reduce((a, b) => a + b, 0) / all);
@@ -429,15 +441,21 @@ function render() {
   // genre eras: one row per genre, so its comebacks line up and the rows read as taste shifting
   // (a comeback that starts under the previous era's label takes a second row)
   // ponytail: a comeback close behind its own label can collide with it; nudge labels if that shows up
-  const rows = [];
-  for (const g of eras[0]?.genre ? Map.groupBy(spans, x => x.e.key).values() : spans.map(x => [x])) {
-    assignLanes(g);
-    const sub = [];
-    for (const x of g) (sub[x.lane] ||= []).push(x);
-    for (const r of sub) rows.push({ g: r, start: Math.min(...r.map(x => x.start)), end: Math.max(...r.map(x => x.end)) });
+  let nLanes;
+  if (eras[0]?.genre) {
+    const rows = [];
+    for (const g of groupBy(spans, x => x.e.key).values()) {
+      assignLanes(g);
+      const sub = [];
+      for (const x of g) (sub[x.lane] ||= []).push(x);
+      for (const r of sub) rows.push({ g: r, start: Math.min(...r.map(x => x.start)), end: Math.max(...r.map(x => x.end)) });
+    }
+    nLanes = assignLanes(rows);
+    for (const r of rows) for (const x of r.g) x.e.lane = r.lane;
+  } else {
+    nLanes = assignLanes(spans);
+    for (const x of spans) x.e.lane = x.lane;
   }
-  const nLanes = assignLanes(rows);
-  for (const r of rows) for (const x of r.g) x.e.lane = r.lane;
   const W = Math.ceil(w * view.n), H = AXIS + Math.max(1, nLanes) * (LANE + GAP);
   const max = Math.max(1, ...eras.flatMap(e => e.counts));
   const esc = s => s.replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
@@ -490,10 +508,12 @@ function render() {
     </button></li>`).join('');
 
   if (!eras.length && el.progress.hidden && !el.status.classList.contains('error')) say(`No eras at this setting. Open Adjust and drag toward ${$('#sens-lo').textContent}.`);
-  show(state.sel || eras[0]);
+  // a redraw (e.g. art arriving) keeps the hovered era in the header; eras are rebuilt, so match by key and start
+  const h = hovered && eras.find(x => x.key === hovered.key && x.start === hovered.start);
+  show(h || state.sel || eras[0]);
 }
 
-let shown = null;
+let shown = null, hovered = null;
 function show(e) {
   el.jacket.classList.toggle('empty', !e);
   if (!e) return;
@@ -502,22 +522,33 @@ function show(e) {
   el.jacket.style.setProperty('--era-ink', inkFor(color));
   document.documentElement.style.setProperty('--era', color);
   document.documentElement.style.setProperty('--era-ink', inkFor(color));
-  const mosaic = el.frame.querySelector('.mosaic');
+  const mosaics = [...el.frame.querySelectorAll('.mosaic')];
   const imgs = [...el.frame.querySelectorAll(':scope > img')];
   const top = imgs[imgs.length - 1], url = a && a.url;
   if (e.genre) {
-    // a genre era is about the genre, not one artist: show its top artists' covers, up to four
+    // a genre era is about the genre, not one artist: show its top artists' covers, up to four.
+    // The grid is laid out for every tile up front and each cover fades into its own tile as it
+    // arrives, so the tiles never reshuffle. A new era's covers fade in as the old ones fade out, as
+    // single covers do: stacked multiply-blended covers darken (and fading the grid breaks the blend)
     imgs.forEach(i => i.remove());
     e.tiles.forEach(wantArt);
-    const urls = e.tiles.map(t => art.get(t.albumKey)?.url).filter(Boolean);
-    if (mosaic?.dataset.urls !== urls.join(' ')) {
-      const m = Object.assign(document.createElement('div'), { className: 'mosaic' });
-      m.dataset.urls = urls.join(' ');
-      m.append(...urls.map(src => Object.assign(new Image(), { alt: '', src })));
-      if (mosaic) mosaic.replaceWith(m); else el.frame.append(m);
-    }
+    const key = e.tiles.map(t => t.albumKey).join('\n');
+    let m = mosaics[mosaics.length - 1];
+    if (m?.dataset.key !== key) {
+      mosaics.slice(0, -1).forEach(x => x.remove()); // only ever stack two sets of covers
+      const old = m;
+      m = Object.assign(document.createElement('div'), { className: 'mosaic' });
+      m.dataset.key = key;
+      m.append(...e.tiles.map(() => Object.assign(new Image(), { alt: '' })));
+      el.frame.append(m);
+      const ready = e.tiles.map((t, i) => fillTile(m.children[i], art.get(t.albumKey)?.url));
+      if (old) Promise.all(ready).then(() => {
+        old.querySelectorAll('img').forEach(i => i.classList.remove('on'));
+        setTimeout(() => old.remove(), 500);
+      });
+    } else e.tiles.forEach((t, i) => fillTile(m.children[i], art.get(t.albumKey)?.url));
   } else {
-    mosaic?.remove();
+    mosaics.forEach(x => x.remove());
     if (!url) imgs.forEach(i => i.remove());
     else if (!top || top.dataset.src !== url) {
       // covers are multiply-blended, so stacked copies darken: only ever crossfade two
@@ -550,6 +581,13 @@ function show(e) {
   $('#f-share').textContent = e.lift ? `${e.lift < 10 ? e.lift.toFixed(1) : Math.round(e.lift)}×` : `${Math.round(e.share * 100)}%`;
 }
 
+// set a mosaic tile's cover once and fade it in when decoded, so a cached cover doesn't flash blank
+function fillTile(img, url) {
+  if (!url || img.dataset.src) return;
+  img.dataset.src = img.src = url;
+  return img.decode().catch(() => {}).then(() => img.classList.add('on'));
+}
+
 function errorText(e, user) {
   const kept = state.months.some(m => m.album || m.artist) ? ' What loaded so far is saved, so pulling again picks up where it stopped.' : '';
   switch (e.code) {
@@ -571,9 +609,9 @@ function say(msg, kind) { // kind: 'warn' | 'error' | falsy
 // ── wiring ──
 const eraAt = t => { const n = t.closest('[data-i]'); return n ? state.eras[+n.dataset.i] : null; };
 for (const root of [el.timeline, el.list]) {
-  root.addEventListener('pointerover', ev => { const e = eraAt(ev.target); if (e) show(e); });
-  root.addEventListener('focusin', ev => { const e = eraAt(ev.target); if (e) show(e); });
-  root.addEventListener('pointerleave', () => show(state.sel || state.eras[0]));
+  root.addEventListener('pointerover', ev => { const e = eraAt(ev.target); if (e) show(hovered = e); });
+  root.addEventListener('focusin', ev => { const e = eraAt(ev.target); if (e) show(hovered = e); });
+  root.addEventListener('pointerleave', () => { hovered = null; show(state.sel || state.eras[0]); });
   root.addEventListener('click', ev => select(eraAt(ev.target)));
   root.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('.slab')) { ev.preventDefault(); select(eraAt(ev.target)); } });
 }

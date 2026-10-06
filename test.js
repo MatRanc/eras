@@ -42,17 +42,17 @@ const gm = genreMonths(steady.map((p, i) => ({
 const g = buildSeries(gm, 1, 'artist');
 assert.strictEqual(g.totals[0], 92, 'untagged plays still count toward the total');
 g.series.delete('');
-const ge = detectEras(g.series, g.totals, { share: 0.05, floor: 10, lift: 2 });
+const ge = detectEras(g.series, g.totals, { share: 0.05, floor: 10, lift: 2, ramp: false });
 assert.deepStrictEqual(ge.map(e => [e.key, e.start, e.end]), [['shoegaze', 4, 6]]);
 
 // gap: a run rides out that many quiet buckets; minLen: shorter eras are dropped
 const dips = new Map([['x', [20, 0, 0, 20, 20, 0, 0, 0, 20, 0]]]), flat = new Array(10).fill(100);
-assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, gap: 2 }).map(e => [e.start, e.end]), [[0, 4]]);
-assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, gap: 2, minLen: 6 }), []);
+assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, ramp: false, gap: 2 }).map(e => [e.start, e.end]), [[0, 4]]);
+assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, ramp: false, gap: 2, minLen: 6 }), []);
 
 // The bar stops 10 points over the usual share: a genre at 75% overall can still run at 90%+.
 const main = new Map([['k-pop', [70, 70, 95, 95, 95, 70, 70, 70]]]), hundred = new Array(8).fill(100);
-assert.deepStrictEqual(detectEras(main, hundred, { share: 0.05, floor: 4, lift: 1.4 }).map(e => [e.start, e.end]), [[2, 4]]);
+assert.deepStrictEqual(detectEras(main, hundred, { share: 0.05, floor: 4, lift: 1.4, ramp: false }).map(e => [e.start, e.end]), [[2, 4]]);
 // lift 0 (short histories): the plain share bar, still without the ramp
 assert.deepStrictEqual(detectEras(main, hundred, { share: 0.05, floor: 4, lift: 0, ramp: false }).map(e => [e.start, e.end]), [[0, 7]]);
 
