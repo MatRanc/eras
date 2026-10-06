@@ -293,7 +293,7 @@ const FAMILIES = [
 function genreColor(g) {
   let h = 0;
   for (const ch of g) h = (h * 31 + ch.charCodeAt(0)) | 0;
-  h = Math.abs(h);
+  h >>>= 0; // unsigned: Math.abs(INT32_MIN) stays out of range
   const hue = FAMILIES.find(([re]) => re.test(g))?.[1] ?? h % 360;
   return hex((((hue + (h % 25) - 12) % 360) + 360) % 360 / 360, 0.62, 0.74 + (h >> 5) % 4 * 0.06);
 }
@@ -368,7 +368,9 @@ function compute() {
       e.name = e.key;
       e.artist = e.artists[0][0];
       e.by = e.artists.slice(0, 3).map(([a]) => a).join(', ') + (e.artists.length > 3 ? ` and\u00a0${e.artists.length - 3}\u00a0more` : '');
-      e.tiles = e.artists.slice(0, 4).map(([artist]) => { const album = albumOf(artist, e); return { artist, album, albumKey: artist + SEP + album }; });
+      // artists with no album chart in the era (only singles) have no cover: skip them, or their tile stays empty
+      e.tiles = e.artists.slice(0, 8).map(([artist]) => { const album = albumOf(artist, e); return { artist, album, albumKey: artist + SEP + album }; })
+        .filter(t => t.album).slice(0, 4);
       // how far above the genre's usual share the era ran; short histories have no usual share
       if (lift) e.lift = e.share / (series.get(e.key).reduce((a, b) => a + b, 0) / all);
     } else {
@@ -384,7 +386,9 @@ function compute() {
     : albumSeries.totals;
   state.view = { B, n, base, totals, plays };
   state.eras = eras;
-  if (state.sel && !eras.includes(state.sel)) state.sel = eras.find(e => e.key === state.sel.key) || null;
+  // eras are rebuilt: find the selected one again, by start too, since a genre can have several eras
+  const { key, start } = state.sel || {};
+  if (state.sel && !eras.includes(state.sel)) state.sel = eras.find(e => e.key === key && e.start === start) || eras.find(e => e.key === key) || null;
   for (const e of eras) wantArt(e); // genre eras ask for their tiles' art only when shown
 }
 
@@ -435,9 +439,8 @@ function render() {
   const minW = view.B === 1 ? 14 : 18, w = Math.min(120, Math.max(minW, wrapW / view.n));
   // labels sit above their slab and may run past it, so a lane reserves the label's width too,
   // sized at the narrowest bucket so lanes don't reshuffle when the window or zoom changes
-  // ponytail: League Gothic 17px caps average ~7.6px/char; measure with canvas if labels ever collide
   const labelOf = e => (e.name.length > 32 ? e.name.slice(0, 31) + '…' : e.name);
-  const spans = eras.map(e => ({ e, start: e.start, end: Math.max(e.end, e.start + Math.ceil((labelOf(e).length * 7.6 + 10) / minW) - 1) }));
+  const spans = eras.map(e => ({ e, start: e.start, end: Math.max(e.end, e.start + Math.ceil(labelWidth(labelOf(e)) / minW) - 1) }));
   // genre eras: one row per genre, so its comebacks line up and the rows read as taste shifting
   // (a comeback that starts under the previous era's label takes a second row)
   // ponytail: a comeback close behind its own label can collide with it; nudge labels if that shows up
@@ -483,7 +486,7 @@ function render() {
     const x = e.start * w, y = AXIS + e.lane * (LANE + GAP), ww = (e.end - e.start + 1) * w;
     svg += `<g class="slab${e === state.sel ? ' sel' : ''}" data-i="${i}" tabindex="0" role="button"
       aria-label="${esc(`${e.name}${e.genre ? '' : e.artist !== e.name ? ' by ' + e.artist : ''}, ${spanLabel(e)}, ${e.plays.toLocaleString()} plays`)}">
-      <rect class="hit" x="${x}" y="${y}" width="${Math.max(ww, labelOf(e).length * 7.6 + 10)}" height="${LANE}" fill="transparent"/>
+      <rect class="hit" x="${x}" y="${y}" width="${Math.max(ww, labelWidth(labelOf(e)))}" height="${LANE}" fill="transparent"/>
       <text class="label" x="${x}" y="${y + 16}">${esc(labelOf(e))}</text>
       <rect class="wash" x="${x}" y="${y + LABEL}" width="${ww}" height="${BAND + BARS}" fill="${color}"/>
       <rect class="band" x="${x}" y="${y + LABEL}" width="${ww}" height="${BAND}" fill="${color}"/>`;
@@ -512,6 +515,25 @@ function render() {
   const h = hovered && eras.find(x => x.key === hovered.key && x.start === hovered.start);
   show(h || state.sel || eras[0]);
 }
+
+// A label's width plus a gap, measured in a hidden copy of the label style: per-character guesses
+// miss fallback fonts (CJK runs about twice as wide as League Gothic caps) and labels collide
+const widths = new Map();
+let ruler;
+function labelWidth(s) {
+  if (!widths.has(s)) {
+    if (!ruler) {
+      document.body.insertAdjacentHTML('beforeend', '<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><g class="slab"><text class="label"></text></g></svg>');
+      ruler = document.body.lastElementChild.querySelector('text');
+    }
+    ruler.textContent = s;
+    widths.set(s, ruler.getComputedTextLength() + 10);
+  }
+  return widths.get(s);
+}
+// widths taken before a font loaded are off. Google Fonts loads each alphabet (Cyrillic, CJK…) only
+// when it first shows up, so re-measure after every font load, not just the first
+document.fonts.addEventListener('loadingdone', () => { widths.clear(); schedule(); });
 
 let shown = null, hovered = null;
 function show(e) {
@@ -611,6 +633,7 @@ const eraAt = t => { const n = t.closest('[data-i]'); return n ? state.eras[+n.d
 for (const root of [el.timeline, el.list]) {
   root.addEventListener('pointerover', ev => { const e = eraAt(ev.target); if (e) show(hovered = e); });
   root.addEventListener('focusin', ev => { const e = eraAt(ev.target); if (e) show(hovered = e); });
+  root.addEventListener('focusout', () => { hovered = null; });
   root.addEventListener('pointerleave', () => { hovered = null; show(state.sel || state.eras[0]); });
   root.addEventListener('click', ev => select(eraAt(ev.target)));
   root.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('.slab')) { ev.preventDefault(); select(eraAt(ev.target)); } });
