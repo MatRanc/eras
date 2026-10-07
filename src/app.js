@@ -484,10 +484,11 @@ function render() {
   eras.forEach((e, i) => {
     const color = colorOf(e);
     const x = e.start * w, y = AXIS + e.lane * (LANE + GAP), ww = (e.end - e.start + 1) * w;
+    const label = labelOf(e), lang = langOf(label);
     svg += `<g class="slab${e === state.sel ? ' sel' : ''}" data-i="${i}" tabindex="0" role="button"
       aria-label="${esc(`${e.name}${e.genre ? '' : e.artist !== e.name ? ' by ' + e.artist : ''}, ${spanLabel(e)}, ${e.plays.toLocaleString()} plays`)}">
-      <rect class="hit" x="${x}" y="${y}" width="${Math.max(ww, labelWidth(labelOf(e)))}" height="${LANE}" fill="transparent"/>
-      <text class="label" x="${x}" y="${y + 16}">${esc(labelOf(e))}</text>
+      <rect class="hit" x="${x}" y="${y}" width="${Math.max(ww, labelWidth(label))}" height="${LANE}" fill="transparent"/>
+      <text class="label" x="${x}" y="${y + 16}"${lang ? ` lang="${lang}"` : ''}>${esc(label)}</text>
       <rect class="wash" x="${x}" y="${y + LABEL}" width="${ww}" height="${BAND + BARS}" fill="${color}"/>
       <rect class="band" x="${x}" y="${y + LABEL}" width="${ww}" height="${BAND}" fill="${color}"/>`;
     e.counts.forEach((c, k) => {
@@ -516,6 +517,11 @@ function render() {
   show(h || state.sel || eras[0]);
 }
 
+// Tag scripts whose uppercase depends on language: Greek drops its accents only when tagged Greek (else ΒΑΣ΄ΙΛΗΣ),
+// and Georgian is left lowercase (style.css), since its capitals (Mtavruli) read as garbled in names
+const langOf = s => /\p{Script=Greek}/u.test(s) ? 'el' : /\p{Script=Georgian}/u.test(s) ? 'ka' : '';
+const setLang = (node, s) => (langOf(s) ? node.setAttribute('lang', langOf(s)) : node.removeAttribute('lang'));
+
 // A label's width plus a gap, measured in a hidden copy of the label style: per-character guesses
 // miss fallback fonts (CJK runs about twice as wide as League Gothic caps) and labels collide
 const widths = new Map();
@@ -527,6 +533,7 @@ function labelWidth(s) {
       ruler = document.body.lastElementChild.querySelector('text');
     }
     ruler.textContent = s;
+    setLang(ruler, s);
     widths.set(s, ruler.getComputedTextLength() + 10);
   }
   return widths.get(s);
@@ -591,6 +598,7 @@ function show(e) {
   if (shown === e) return;
   shown = e;
   el.title.textContent = e.name;
+  setLang(el.title, e.name);
   el.title.classList.toggle('long', e.name.length > 22);
   el.sub.textContent = !e.genre && e.artist !== e.name ? e.artist : e.by;
   el.facts.hidden = false;

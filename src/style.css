@@ -8,8 +8,9 @@
   /* the jacket recolors to whichever era is in focus */
   --era: var(--blue);
   --era-ink: var(--paper);
-  --display: "League Gothic", "Yanone Kaffeesatz", sans-serif; /* Yanone Kaffeesatz and Roboto Flex only fill in Cyrillic */
-  --display-xl: "League Gothic", "Sofia Sans Extra Condensed", sans-serif; /* Yanone's soft corners show at title size */
+  --scripts: "Noto Sans Arabic", "Noto Sans Hebrew", "Noto Sans Thai", "Noto Sans Devanagari", "Noto Sans Bengali", "Noto Sans Tamil", "Noto Sans Telugu", "Noto Sans Kannada", "Noto Sans Malayalam", "Noto Sans Gujarati", "Noto Sans Gurmukhi", "Noto Sans Sinhala", "Noto Sans Oriya", "Noto Sans Georgian", "Noto Sans Armenian", "Noto Sans Ethiopic", "Noto Sans Khmer", "Noto Sans Lao", "Noto Sans Myanmar";
+  --display: "League Gothic", "Yanone Kaffeesatz", "Sofia Sans Extra Condensed", var(--scripts), sans-serif; /* League Gothic is Latin-only: Yanone fills in Cyrillic, Sofia Greek, condensed Noto the rest. Each alphabet downloads only when it shows up */
+  --display-xl: "League Gothic", "Sofia Sans Extra Condensed", var(--scripts), sans-serif; /* Yanone's soft corners show at title size */
   --ui: "Archivo", "Roboto Flex", system-ui, sans-serif;
   --gutter: clamp(16px, 4vw, 48px);
   color-scheme: dark;
@@ -315,4 +316,10 @@ footer a:hover, footer a:focus-visible { color: var(--paper); text-decoration: u
 
 /* Fallback caps differ in height from League Gothic's; scale the Cyrillic fallback to League Gothic's cap height.
    Kept after every `font:` shorthand above, since the shorthand resets it */
-h1, h2, .controls button, .seg label span, .facts dd, .timeline .year, .slab .label { font-size-adjust: cap-height .735; }
+h1, h2, .controls button, .seg label span, .facts dd, .timeline .year, .slab .label {
+  font-size-adjust: cap-height .735;
+  /* League Gothic has one weight, so 700 leaves it as is but makes system fallbacks (CJK, Thaana) use their bold */
+  font-weight: 700;
+  font-synthesis: none;
+}
+h1:lang(ka), .slab .label:lang(ka) { text-transform: none; } /* see langOf in app.js */
