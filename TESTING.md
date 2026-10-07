@@ -19,6 +19,7 @@ Real histories that show off (or break) era detection. Open any of them with
 | RPAppelket | Ukrainian pop/rock, 2020– | Genre mix barely moves; short history |
 | Alpha_Stream | J-pop, 12k plays | Light listener; ~29% of plays have no genre (tagged only "japanese") |
 | yguismo | Brazil, 12 years | 36,762 "pop" plays in Aug–Sep 2025, likely a scrobbling glitch that can fake an era |
+| _fonts | Fake (`src/fake.js`, localhost only) | One era per alphabet (27, from Greek to Thaana): checks each fallback font's size and weight against League Gothic |
 
 ## Last.fm request budget
 

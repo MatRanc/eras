@@ -32,6 +32,8 @@ async function throttle() {
 }
 
 async function call(method, params) {
+  const fake = window.fakeLastfm?.(method, params); // localhost/?user=_fonts, see fake.js
+  if (fake) return fake;
   const u = new URL(API);
   for (const [k, v] of Object.entries({ method, api_key: window.LASTFM_KEY, format: 'json', ...params })) u.searchParams.set(k, v);
   for (let i = 0; ; i++) {
