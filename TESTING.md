@@ -43,3 +43,23 @@ The per-visitor limit isn't the risk; the shared API key is. Last.fm doesn't pub
 a per-key limit, and a suspended key (error 26) takes the whole site down. Test with
 a separate development key, and if traffic grows, a shared server-side tag cache
 would remove most genre-mode requests (tags are the same for every visitor).
+
+### Why a traffic spike is fine, and what isn't
+
+Every request comes from the visitor's own browser, so each visitor has their own
+5/s allowance: a thousand visitors at once are a thousand separate budgets. A backend
+would put every request on one server IP and one budget, so keep it static.
+
+More keys buy nothing: the limit is per IP, not per key, and rotating keys to get
+around it is how keys get suspended. The key is also public (it ships in
+`config.js`), so anyone can reuse it.
+
+If the key gets suspended:
+
+1. Create a spare key at https://www.last.fm/api/account/create (keep one ready).
+2. Put it in the `LASTFM_API_KEY` repo secret.
+3. Re-run the Deploy workflow (or push to `main`). The site shows a "key suspended"
+   message until then.
+
+If it ever needs more than the standard limit, Last.fm's terms allow higher limits
+with their written consent: email them.
