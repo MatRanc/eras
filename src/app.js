@@ -522,7 +522,7 @@ function render() {
 // Tag scripts whose uppercase depends on language: Greek drops its accents only when tagged Greek (else ΒΑΣ΄ΙΛΗΣ),
 // and Georgian is left lowercase (style.css), since its capitals (Mtavruli) read as garbled in names
 const langOf = s => /\p{Script=Greek}/u.test(s) ? 'el' : /\p{Script=Georgian}/u.test(s) ? 'ka' : '';
-const setLang = (node, s) => (langOf(s) ? node.setAttribute('lang', langOf(s)) : node.removeAttribute('lang'));
+const setLang = (node, s, l = langOf(s)) => (l ? node.setAttribute('lang', l) : node.removeAttribute('lang'));
 
 // A label's width plus a gap, measured in a hidden copy of the label style: per-character guesses
 // miss fallback fonts (CJK runs about twice as wide as League Gothic caps) and labels collide

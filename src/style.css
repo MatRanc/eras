@@ -90,6 +90,8 @@ h1 {
   letter-spacing: -.01em;
   text-wrap: balance;
   overflow-wrap: anywhere;
+  unicode-bidi: plaintext; /* an Arabic or Hebrew name reads right to left, punctuation and all */
+  text-align: left; /* but stays where Latin titles sit */
 }
 h1.long { font-size: clamp(2.6rem, 5vw, 5rem); }
 /* empty state: the title is the jacket */
