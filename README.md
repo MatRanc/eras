@@ -1,8 +1,12 @@
 # Eras
 
-Your Last.fm history as a timeline of eras: the albums and artists that ran each stretch of your listening.
+Your Last.fm or Spotify history as a timeline of eras: the albums and artists that ran each stretch of your listening.
 
 Static, browser-only. https://eras.matranc.com
+
+Spotify listeners upload their Extended streaming history ZIP in the page. It is parsed in
+the browser and never uploaded; plays are song streams of 30 seconds or more, and podcasts,
+audiobooks and videos are ignored.
 
 ![Album eras: Utopia by Travis Scott](screenshots/albums.png)
 

@@ -7,9 +7,10 @@ const el = {
   jacket: $('#jacket'), frame: $('#cover-frame'), title: $('#title'), sub: $('#sub'), facts: $('#facts'),
   form: $('#form'), user: $('#user'), go: $('#go'), bucket: $('#bucket'), sens: $('#sens'), sensOut: $('#sens-out'),
   status: $('#status'), progress: $('#progress'), timeline: $('#timeline'), side: $('#side'), list: $('#list'),
+  spotify: $('#spotify'), spotifyFile: $('#spotify-file'),
 };
 
-const state = { user: null, months: [], run: 0, eras: [], sel: null, view: null, tags: new Map(), tagsUser: null };
+const state = { user: null, months: [], run: 0, eras: [], sel: null, view: null, tags: new Map(), tagsUser: null, source: 'lastfm', playcount: 0 };
 
 // ── storage (finished months never change, so cache them) ──
 const store = {
@@ -83,7 +84,9 @@ async function load(user) {
   const run = ++state.run;
   const info = (await call('user.getinfo', { user })).user;
   if (run !== state.run) return;
+  state.source = 'lastfm';
   state.user = info.name;
+  state.playcount = +info.playcount;
   state.months = monthsSince(+info.registered.unixtime);
   state.sel = null;
   const keyOf = (mo, mode) => `${info.name.toLowerCase()}:${mo.y}-${mo.m}${mode === 'artist' ? ':ar' : ''}`;
@@ -126,12 +129,18 @@ async function load(user) {
   if (run !== state.run) return;
   await charts('album');
   if (run !== state.run) return;
+  finishLoad();
+}
+
+// shared last mile for both sources: detect, draw, report what was loaded
+function finishLoad() {
   el.progress.hidden = true;
   compute();
   render();
   centerOn(state.eras[0], 'instant');
-  const plays = (+info.playcount).toLocaleString();
-  say(`${info.name} · ${plays} scrobbles since ${MONTHS[state.months[0].m]} ${state.months[0].y}`);
+  const plays = state.playcount.toLocaleString();
+  const noun = state.source === 'spotify' ? 'Spotify plays' : 'scrobbles';
+  say(`${state.user} · ${plays} ${noun} since ${MONTHS[state.months[0].m]} ${state.months[0].y}`);
 }
 
 // ── genres ──
@@ -210,6 +219,141 @@ function genreOf(artist) {
   const t = state.tags.get(artist);
   if (!t?.length) return '';
   return (t.find(([g, v]) => !UMBRELLA.has(g) && v >= NARROW * t[0][1]) || t[0])[0];
+}
+
+// ── Spotify extended streaming history ──
+// The export is a ZIP of JSON files, one row per stream. It is read here, in the browser:
+// nothing is uploaded anywhere. A stream counts as a play at 30 seconds, close to Last.fm's
+// rule, and podcasts, audiobooks and videos are ignored so only songs shape the eras.
+// ponytail: whole files are parsed at once; stream the JSON if exports ever outgrow a desktop tab.
+const PLAY_MS = 30000;
+const decoder = new TextDecoder();
+
+async function unzip(file) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const dv = new DataView(buf.buffer);
+  let e = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; } // end of central directory
+  }
+  if (e < 0) throw new Error('That file isn’t a ZIP. Choose the .zip Spotify emailed you.');
+  const count = dv.getUint16(e + 10, true), dir = dv.getUint32(e + 16, true);
+  if (count === 0xffff || dir === 0xffffffff) throw new Error('That ZIP is too large for the browser to open. Unzip it and upload the Streaming_History_Audio files instead.');
+  const entries = [];
+  let o = dir;
+  for (let i = 0; i < count; i++) {
+    if (dv.getUint32(o, true) !== 0x02014b50) break; // central directory header
+    const method = dv.getUint16(o + 10, true);
+    const csize = dv.getUint32(o + 20, true);
+    const nlen = dv.getUint16(o + 28, true), elen = dv.getUint16(o + 30, true), clen = dv.getUint16(o + 32, true);
+    const local = dv.getUint32(o + 42, true);
+    const name = decoder.decode(buf.subarray(o + 46, o + 46 + nlen));
+    if (/\.json$/i.test(name) && csize !== 0xffffffff) {
+      const nl = dv.getUint16(local + 26, true), xl = dv.getUint16(local + 28, true);
+      const start = local + 30 + nl + xl;
+      entries.push({ name, method, raw: buf.subarray(start, start + csize) });
+    }
+    o += 46 + nlen + elen + clen;
+  }
+  return entries;
+}
+
+async function inflate(entry) {
+  if (entry.method === 0) return entry.raw; // stored
+  if (entry.method !== 8) throw new Error(`Couldn’t read ${entry.name}: unsupported compression.`);
+  if (typeof DecompressionStream === 'undefined') throw new Error('This browser can’t unzip files. Try a recent Chrome, Safari or Firefox.');
+  const stream = new Blob([entry.raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+// one stream row → its month's artist and album tallies; false when it isn't a song play
+function addSpotifyRow(r, acc) {
+  // songs only: podcasts, audiobooks and videos carry episode/audiobook fields
+  if (!r?.master_metadata_track_name || !r.master_metadata_album_artist_name) return false;
+  if (r.episode_name || r.episode_show_name || r.spotify_episode_uri || r.audiobook_title || r.audiobook_chapter_title) return false;
+  if (!(+r.ms_played >= PLAY_MS)) return false;
+  const t = Date.parse(r.ts);
+  if (Number.isNaN(t)) return false;
+  const d = new Date(t), idx = d.getUTCFullYear() * 12 + d.getUTCMonth();
+  let m = acc.months.get(idx);
+  if (!m) acc.months.set(idx, m = { a: new Map(), b: new Map() });
+  const artist = r.master_metadata_album_artist_name;
+  m.a.set(artist, (m.a.get(artist) || 0) + 1);
+  const album = r.master_metadata_album_album_name;
+  if (album) m.b.set(artist + SEP + album, (m.b.get(artist + SEP + album) || 0) + 1);
+  acc.plays++;
+  if (!acc.user && r.username) acc.user = r.username;
+  if (t / 1000 < acc.first) acc.first = t / 1000;
+  return true;
+}
+
+// rows → the same { idx, artist, album } shape the Last.fm charts produce
+function spotifyMonths(acc) {
+  const first = Math.min(acc.first, Date.now() / 1000); // a clock-skewed row shouldn't blank the timeline
+  return monthsSince(first).map(mo => {
+    const m = acc.months.get(mo.idx);
+    if (!m) return mo;
+    mo.artist = [...m.a].filter(([, p]) => p >= 2).sort((x, y) => y[1] - x[1]).slice(0, 150).map(([a, p]) => ['', a, p]);
+    mo.album = [...m.b].filter(([, p]) => p >= 2).sort((x, y) => y[1] - x[1]).slice(0, 150)
+      .map(([k, p]) => { const i = k.indexOf(SEP); return [k.slice(i + 1), k.slice(0, i), p]; });
+    return mo;
+  });
+}
+
+async function loadSpotify(file) {
+  const run = ++state.run;
+  state.slowed = false;
+  el.progress.hidden = false;
+  el.progress.max = 1;
+  el.progress.value = 0;
+  say('Reading your Spotify export — this can take a while, especially for a long history. Leave this tab open; only song plays count.', 'warn');
+  await new Promise(r => setTimeout(r, 0)); // let the notice paint before the first parse blocks
+
+  const entries = await unzip(file);
+  // song plays live in Streaming_History_Audio; video/podcast files are skipped outright
+  const audio = entries.filter(x => /streaming.?history.?audio[_.-]/i.test(x.name));
+  const list = audio.length ? audio : entries;
+  if (!list.length) throw new Error('That ZIP has no JSON files in it.');
+
+  const acc = { months: new Map(), plays: 0, user: '', first: Infinity };
+  el.progress.max = list.length;
+  let done = 0;
+  for (const entry of list) {
+    if (run !== state.run) return;
+    say(`Reading ${entry.name} · ${done + 1} of ${list.length} — this can take a while.`, 'warn');
+    await new Promise(r => setTimeout(r, 0));
+    let rows;
+    try {
+      rows = JSON.parse(decoder.decode(await inflate(entry)).replace(/^\uFEFF/, ''));
+    } catch (e) {
+      if (run !== state.run) return;
+      throw new Error(`Couldn’t read ${entry.name}. The download may be incomplete; try exporting again.`);
+    }
+    if (Array.isArray(rows)) for (const r of rows) addSpotifyRow(r, acc);
+    done++;
+    el.progress.value = done;
+  }
+  if (run !== state.run) return;
+  if (!acc.plays) throw new Error('That ZIP had no song plays in it. Request “Extended streaming history” from Spotify, not “Account data”.');
+
+  state.source = 'spotify';
+  state.user = acc.user || 'Spotify';
+  state.playcount = acc.plays;
+  state.months = spotifyMonths(acc);
+  state.sel = null;
+  state.tagsUser = null;
+  el.user.value = ''; // the username box is Last.fm's; the export names its own listener
+  if (el.form.mode.value === 'genre') {
+    try {
+      await loadTags(run);
+    } catch {
+      if (run !== state.run) return;
+      finishLoad();
+      return say('Your Spotify data loaded, but Last.fm wouldn’t give genre tags right now. Try Genres again in a few minutes.', 'warn');
+    }
+  }
+  if (run !== state.run) return;
+  finishLoad();
 }
 
 // ── art + color ──
@@ -666,7 +810,10 @@ function centerOn(e, behavior) {
 }
 
 function syncURL() {
-  const p = new URLSearchParams({ user: el.user.value.trim(), mode: el.form.mode.value, b: el.bucket.value, s: el.sens.value });
+  // a Spotify view has no Last.fm user to put in the URL, so the link just keeps the view settings
+  const p = new URLSearchParams({ mode: el.form.mode.value, b: el.bucket.value, s: el.sens.value });
+  const user = el.user.value.trim();
+  if (user) p.set('user', user);
   history.replaceState(null, '', '?' + p);
 }
 
@@ -703,9 +850,28 @@ let submits = 0;
 el.form.addEventListener('submit', async ev => {
   ev.preventDefault();
   const user = el.user.value.trim();
-  if (!user) return;
-  if (!window.LASTFM_KEY) return say('No Last.fm API key configured (src/config.js).', 'error');
   syncURL();
+  // an uploaded Spotify export is already in memory: controls only need a redraw, and genre
+  // mode may still need its Last.fm tags
+  if (state.source === 'spotify' && !user) {
+    if (el.form.mode.value === 'genre' && state.tagsUser !== state.user) {
+      const mine = ++submits, run = ++state.run;
+      el.go.disabled = true;
+      try {
+        await loadTags(run);
+        if (run === state.run) finishLoad();
+      } catch {
+        if (run === state.run) say('Last.fm wouldn’t give genre tags right now. Try Genres again in a few minutes.', 'error');
+      } finally {
+        if (mine === submits) el.go.disabled = false;
+      }
+      return;
+    }
+    finishLoad();
+    return;
+  }
+  if (!user) return say('Enter a Last.fm username, or upload a Spotify export.', 'warn');
+  if (!window.LASTFM_KEY) return say('No Last.fm API key configured (src/config.js).', 'error');
   gtag('event', 'pull_history', { mode: el.form.mode.value }); // no username: GA forbids personal info
   const mine = ++submits;
   el.go.disabled = true;
@@ -723,6 +889,31 @@ el.form.addEventListener('submit', async ev => {
     el.go.disabled = false;
     el.go.textContent = 'Find eras';
     el.form.removeAttribute('aria-busy');
+  }
+});
+
+// Spotify export: a local file, parsed in the page, never uploaded
+el.spotify.addEventListener('click', () => el.spotifyFile.click());
+el.spotifyFile.addEventListener('change', async () => {
+  const file = el.spotifyFile.files?.[0];
+  el.spotifyFile.value = ''; // picking the same file again should still fire
+  if (!file) return;
+  const mine = ++submits;
+  el.go.disabled = true;
+  el.go.textContent = 'Reading…';
+  el.form.setAttribute('aria-busy', 'true');
+  try {
+    await loadSpotify(file);
+  } catch (e) {
+    state.run++;
+    el.progress.hidden = true;
+    say(e.message || 'Couldn’t read that ZIP.', 'error');
+  } finally {
+    if (mine === submits) {
+      el.go.disabled = false;
+      el.go.textContent = 'Find eras';
+      el.form.removeAttribute('aria-busy');
+    }
   }
 });
 

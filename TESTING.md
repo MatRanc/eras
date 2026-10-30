@@ -21,6 +21,28 @@ Real histories that show off (or break) era detection. Open any of them with
 | yguismo | Brazil, 12 years | 36,762 "pop" plays in Aug–Sep 2025, likely a scrobbling glitch that can fake an era |
 | _fonts | Fake (`src/fake.js`, localhost only) | One era per alphabet (27, from Greek to Thaana): checks each fallback font's size and weight against League Gothic |
 
+## Spotify import
+
+The button under the username box takes Spotify's **Extended streaming history** ZIP
+(Account → Privacy → Download your data; email, not instant). It is read in the page:
+nothing is uploaded, and the raw rows are never cached.
+
+What to check:
+
+| Case | Expected |
+|---|---|
+| Song stream ≥ 30s | Counts once, credited to the album artist and album |
+| Song stream < 30s | Ignored |
+| Podcast, audiobook or video | Ignored (episode/audiobook fields, or a `Streaming_History_Video` file) |
+| `ms_played` 42s with `skipped: true` | Still counts: without track duration the 30s rule is the only test |
+| Single with no album name | Counts toward the artist, not the album chart |
+| Non-ZIP or a partial download | Readable error; the previous view stays on screen |
+| 10+ years, several audio files | Files read one at a time; progress names the file |
+
+Genre mode still asks Last.fm for artist tags, so it needs the deployed API key. Album and
+artist modes need no Last.fm account; cover art still comes from Last.fm, and falls back to a
+palette colour if that request fails.
+
 ## Last.fm request budget
 
 Last.fm limits each visitor IP to 5 requests/s averaged over 5 minutes (~1,500 per

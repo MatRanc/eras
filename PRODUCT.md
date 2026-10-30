@@ -24,7 +24,7 @@ Not another top-charts list. Eras are auto-detected time segments, shown on a ti
 
 ## Capabilities and Constraints
 
-- Enter any Last.fm username; switch between album eras and artist eras.
+- Enter any Last.fm username, or upload a Spotify Extended streaming history ZIP (parsed locally, songs only); switch between album eras and artist eras.
 - User controls bucket length (month granularity and up) and detection sensitivity.
 - Eras may overlap; the timeline stacks them.
 - Last.fm API key ships in client JS (unavoidable browser-only); it is kept out of git and injected at deploy from a repo secret.
