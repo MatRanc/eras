@@ -34,7 +34,9 @@ function buildSeries(months, B, mode) {
 // over the usual share, or a genre that is most of someone's listening could never form an era.
 // `ramp: false` skips the ramp, since a steady genre sits above half the floor almost everywhere.
 // `gap` is how many quiet buckets a run survives, `minLen` the fewest buckets an era may span.
-function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxGap = 1, minLen = 1 }) {
+// `trim` cuts the ramp that faces a one-bucket comeback back to the hot run, so the quiet
+// bucket between the two stays empty and month-mode comebacks read as separate phases.
+function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxGap = 1, minLen = 1, trim = false }) {
   const eras = [];
   const all = totals.reduce((a, b) => a + b, 0) || 1;
   for (const [key, c] of series) {
@@ -42,6 +44,7 @@ function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxG
     const usual = c.reduce((a, b) => a + b, 0) / all;
     const bar = lift ? Math.max(share, Math.min(lift * usual, usual + 0.1)) : share;
     const hot = i => c[i] >= floor && c[i] >= bar * totals[i];
+    // the hot run is kept beside the ramped one: a comeback cuts back to it
     const runs = [];
     let i = 0;
     while (i < n) {
@@ -50,6 +53,7 @@ function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxG
       for (let j = i + 1; j < n; j++) {
         if (hot(j)) { e = j; gap = 0; } else if (++gap > maxGap) break;
       }
+      const hotStart = i, hotEnd = e;
       if (ramp) {
         while (s > 0 && c[s - 1] >= floor / 2) s--;
         while (e < n - 1 && c[e + 1] >= floor / 2) e++;
@@ -58,29 +62,31 @@ function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxG
       const plays = counts.reduce((a, b) => a + b, 0);
       if (plays >= floor * 3 && counts.length >= minLen) {
         const pk = counts.indexOf(Math.max(...counts));
-        runs.push({ key, start: s, end: e, counts, plays, peak: counts[pk], peakAt: s + pk });
+        runs.push({ hotStart, hotEnd, era: { key, start: s, end: e, counts, plays, peak: counts[pk], peakAt: s + pk } });
       }
       i = e + 1;
     }
-    // the scan breaks a run after maxGap quiet buckets, then the ramp can absorb the one
-    // next to the following run, leaving a single bucket between two runs of the same key.
-    // join those: one pause is not two eras, at any bucket size.
-    const merged = [];
-    for (const r of runs) {
-      const prev = merged[merged.length - 1];
-      if (prev && r.start <= prev.end + 2) {
-        prev.end = r.end;
-        // recompute from the full series so the quiet bucket's plays and the peak stay true
-        prev.counts = c.slice(prev.start, prev.end + 1);
-        prev.plays = prev.counts.reduce((a, b) => a + b, 0);
-        const pk = prev.counts.indexOf(Math.max(...prev.counts));
-        prev.peak = prev.counts[pk];
-        prev.peakAt = prev.start + pk;
-      } else {
-        merged.push(r);
+    // Two runs of the same key one bucket apart are a comeback, not one long phase: cut the
+    // ramp on each side that faces the gap back to its hot run, so the quiet bucket between
+    // them stays empty and the two read as separate stretches. Only month buckets ask for
+    // this; at coarser groupings the one gap is already wide enough. A side whose ramp is
+    // what makes it an era (minLen, floor) is left alone rather than dropped.
+    if (trim) {
+      const cut = (e, start, end) => {
+        const counts = c.slice(start, end + 1);
+        const plays = counts.reduce((a, b) => a + b, 0);
+        if (counts.length < minLen || plays < floor * 3) return;
+        const pk = counts.indexOf(Math.max(...counts));
+        Object.assign(e, { start, end, counts, plays, peak: counts[pk], peakAt: start + pk });
+      };
+      for (let k = 1; k < runs.length; k++) {
+        const prev = runs[k - 1], r = runs[k];
+        if (r.era.start !== prev.era.end + 2) continue; // more than one bucket: already apart
+        cut(prev.era, prev.era.start, prev.hotEnd);
+        cut(r.era, r.hotStart, r.era.end);
       }
     }
-    eras.push(...merged);
+    eras.push(...runs.map(x => x.era));
   }
   return eras.sort((a, b) => b.plays - a.plays);
 }

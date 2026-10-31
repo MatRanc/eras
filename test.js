@@ -50,26 +50,32 @@ const dips = new Map([['x', [20, 0, 0, 20, 20, 0, 0, 0, 20, 0]]]), flat = new Ar
 assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, ramp: false, gap: 2 }).map(e => [e.start, e.end]), [[0, 4]]);
 assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, ramp: false, gap: 2, minLen: 6 }), []);
 
-// merging: one quiet bucket between two runs of the same key is still one era
-const one = new Map([['x', [20, 20, 20, 0, 6, 20, 20]]]), flat7 = new Array(7).fill(100);
-const oneEra = detectEras(one, flat7, { share: 0.1, floor: 10, ramp: true, gap: 1 });
-assert.strictEqual(oneEra.length, 1, 'one quiet bucket should not split same-key runs');
-assert.deepStrictEqual([oneEra[0].start, oneEra[0].end, oneEra[0].plays, oneEra[0].peak, oneEra[0].peakAt], [0, 6, 106, 20, 0]);
-assert.deepStrictEqual(oneEra[0].counts, [20, 20, 20, 0, 6, 20, 20]);
+// trim: a one-bucket comeback stays two eras, and the ramp facing the gap is cut to the hot
+// run (here the second run's ramp head at 4 goes, leaving months 3-4 empty)
+const flat7 = new Array(7).fill(100), comebackOpts = { share: 0.1, floor: 10, ramp: true, trim: true };
+const comeback = detectEras(new Map([['x', [20, 20, 20, 0, 6, 20, 20]]]), flat7, comebackOpts);
+assert.deepStrictEqual(comeback.map(e => [e.start, e.end]).sort((a, b) => a[0] - b[0]), [[0, 2], [5, 6]]);
 
-// the quiet bucket between runs still contributes its plays
-const gp = detectEras(new Map([['x', [20, 20, 20, 4, 6, 20, 20]]]), flat7, { share: 0.1, floor: 10, ramp: true, gap: 1 });
-assert.strictEqual(gp.length, 1);
-assert.deepStrictEqual([gp[0].start, gp[0].end, gp[0].plays], [0, 6, 110], 'the bucket between the runs still counts');
+// both sides trim: the first run's ramp tail and the second's ramp head go, widening the gap
+const both = detectEras(new Map([['x', [20, 20, 20, 6, 0, 7, 20, 20]]]), new Array(8).fill(100), comebackOpts);
+assert.deepStrictEqual(both.map(e => [e.start, e.end]).sort((a, b) => a[0] - b[0]), [[0, 2], [6, 7]]);
+assert.deepStrictEqual(both.map(e => e.plays).sort((a, b) => a - b), [40, 60], 'trimmed plays are recomputed');
 
-// two quiet buckets apart is still two eras
-const two = new Map([['x', [20, 20, 20, 0, 0, 20, 20]]]);
-assert.deepStrictEqual(detectEras(two, flat7, { share: 0.1, floor: 10, ramp: true, gap: 1 }).map(e => [e.start, e.end]), [[0, 2], [5, 6]]);
+// a cut that would drop the era below minLen is skipped, so the ramp stays
+const keep = detectEras(new Map([['x', [20, 20, 6, 0, 7, 20, 20]]]), flat7, { ...comebackOpts, minLen: 3 });
+assert.deepStrictEqual(keep.map(e => [e.start, e.end]).sort((a, b) => a[0] - b[0]), [[0, 2], [4, 6]]);
 
-// a chain of runs with one-bucket gaps collapses to a single era
-const ch = detectEras(new Map([['x', [20, 20, 20, 0, 6, 20, 20, 0, 6, 20, 20]]]), new Array(11).fill(100), { share: 0.1, floor: 10, ramp: true, gap: 1 });
-assert.strictEqual(ch.length, 1);
-assert.deepStrictEqual([ch[0].start, ch[0].end, ch[0].plays, ch[0].peak, ch[0].peakAt], [0, 10, 152, 20, 0]);
+// two buckets apart is untouched: no trim, no merge
+const distant = detectEras(new Map([['x', [20, 20, 20, 0, 0, 20, 20]]]), flat7, comebackOpts);
+assert.deepStrictEqual(distant.map(e => [e.start, e.end]).sort((a, b) => a[0] - b[0]), [[0, 2], [5, 6]]);
+
+// without trim (coarser buckets) the ramp stays, so the same comeback keeps its ramp head
+const coarse = detectEras(new Map([['x', [20, 20, 20, 0, 6, 20, 20]]]), flat7, { ...comebackOpts, trim: false });
+assert.deepStrictEqual(coarse.map(e => [e.start, e.end]).sort((a, b) => a[0] - b[0]), [[0, 2], [4, 6]]);
+
+// a chain of close comebacks trims each run where it faces a gap
+const chain = detectEras(new Map([['x', [20, 20, 6, 0, 7, 20, 20, 6, 0, 7, 20, 20]]]), new Array(12).fill(100), comebackOpts);
+assert.deepStrictEqual(chain.map(e => [e.start, e.end]).sort((a, b) => a[0] - b[0]), [[0, 1], [5, 6], [10, 11]]);
 
 // The bar stops 10 points over the usual share: a genre at 75% overall can still run at 90%+.
 const main = new Map([['k-pop', [70, 70, 95, 95, 95, 70, 70, 70]]]), hundred = new Array(8).fill(100);

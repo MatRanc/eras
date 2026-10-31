@@ -51,8 +51,10 @@ scrobble, or a history that stopped years ago, should not open or close with emp
 months. `?_fonts` is registered 14 months before its first play, so a regression is
 visible locally; `lastfm` stopped scrobbling in 2007.
 
-One quiet bucket between two runs of the same album, artist or genre is merged into a
-single era. Two or more quiet buckets still split it into separate eras.
+In month mode, two runs of the same album, artist or genre one quiet month apart stay
+separate eras: the ramp on each side of the gap is cut back to its strong months, so the
+break reads as a real one. Coarser groupings keep the ramp, where the single gap is
+already wide enough.
 
 ## Last.fm request budget
 

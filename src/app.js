@@ -515,7 +515,8 @@ function compute() {
   const { mode, B, share, lift, ramp, quiet, minLen, perMonth } = settings();
   const { series, totals, n, base } = buildSeries(mode === 'genre' ? genreMonths(state.months, genreOf) : state.months, B, mode === 'album' ? 'album' : 'artist');
   series.delete(''); // untagged artists' plays, kept only in the totals
-  let eras = detectEras(series, totals, { share, lift, ramp, gap: quiet, minLen, floor: perMonth * B });
+  // month buckets trim the ramp at a one-month comeback; coarser buckets already read as gaps
+  let eras = detectEras(series, totals, { share, lift, ramp, gap: quiet, minLen, floor: perMonth * B, trim: B === 1 });
   // album eras carry their own art; artist eras borrow the artist's biggest album inside the era,
   // genre eras show the biggest albums of the genre's top artists inside the era
   // album charts are always fetched, so they also drive the plays line: same shape in any mode
