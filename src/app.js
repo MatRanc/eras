@@ -82,6 +82,7 @@ function monthsSince(unix) {
 
 async function load(user) {
   const run = ++state.run;
+  artStop(); // a new pull owns the progress bar, even if covers are still arriving
   const info = (await call('user.getinfo', { user })).user;
   if (run !== state.run) return;
   state.source = 'lastfm';
@@ -132,15 +133,19 @@ async function load(user) {
   finishLoad();
 }
 
-// shared last mile for both sources: detect, draw, report what was loaded
+// shared last mile for both sources: detect, draw, report what was loaded.
+// Covers are fetched after the charts, so the same bar picks up again with their own total.
 function finishLoad() {
   el.progress.hidden = true;
+  const plays = state.playcount.toLocaleString();
+  const noun = state.source === 'spotify' ? 'Spotify plays' : 'scrobbles';
+  state.summary = `${state.user} · ${plays} ${noun} since ${MONTHS[state.months[0].m]} ${state.months[0].y}`;
+  say(state.summary);
+  if (!artBar) { artBar = true; artTotal = artDone = 0; }
   compute();
   render();
   centerOn(state.eras[0], 'instant');
-  const plays = state.playcount.toLocaleString();
-  const noun = state.source === 'spotify' ? 'Spotify plays' : 'scrobbles';
-  say(`${state.user} · ${plays} ${noun} since ${MONTHS[state.months[0].m]} ${state.months[0].y}`);
+  if (!artWorkers && !artQueue.length) { artBar = false; el.progress.hidden = true; }
 }
 
 // ── genres ──
@@ -165,6 +170,7 @@ function genresIn(raw, genres) {
 }
 
 async function loadTags(run) {
+  artStop(); // tag lookups use the same bar; don't let late covers hide it
   genreList ||= fetch('genres.txt')
     .then(r => { if (!r.ok) throw new Error(`genres.txt: ${r.status}`); return r.text(); })
     .then(t => new Set(t.split('\n').filter(Boolean)), e => { genreList = null; throw e; });
@@ -302,6 +308,7 @@ function spotifyMonths(acc) {
 
 async function loadSpotify(file) {
   const run = ++state.run;
+  artStop();
   state.slowed = false;
   el.progress.hidden = false;
   el.progress.max = 1;
@@ -542,15 +549,45 @@ function wantArt(x) {
   if (!x.album || art.has(x.albumKey)) return;
   art.set(x.albumKey, 'pending');
   artQueue.push(x);
+  if (artBar) { artTotal++; artProgress(); }
   drainArt();
 }
 
 const artQueue = [];
-let artWorkers = 0;
+let artWorkers = 0, artTotal = 0, artDone = 0, artBar = false;
+
+function artStop() { artBar = false; artTotal = artDone = 0; }
+
+// Only the batch that follows a load owns the bar: covers fetched later, when a genre era is
+// shown, are one or two at a time and would make it flicker over the status line.
+function artProgress() {
+  if (!artBar || !artTotal) return;
+  el.progress.hidden = false;
+  el.progress.max = artTotal;
+  el.progress.value = artDone;
+  // keep the load summary visible and append the covers count; stop updating if an error
+  // replaced it, so the error isn't overwritten by the next cover
+  if (!state.summary) return;
+  const ours = state.summary + ' · loading covers ';
+  if (el.status.textContent === state.summary || el.status.textContent.startsWith(ours)) say(`${ours}${artDone} of ${artTotal}`);
+}
+
 function drainArt() {
   while (artWorkers < 3 && artQueue.length) {
     artWorkers++;
-    fetchArt(artQueue.shift()).finally(() => { artWorkers--; drainArt(); });
+    fetchArt(artQueue.shift()).finally(() => {
+      artWorkers--;
+      if (artBar) {
+        artDone++;
+        if (!artQueue.length && !artWorkers) {
+          artBar = false;
+          artTotal = artDone = 0;
+          el.progress.hidden = true;
+          if (state.summary && el.status.textContent.startsWith(state.summary + ' · loading covers ')) say(state.summary);
+        } else artProgress();
+      }
+      drainArt();
+    });
   }
 }
 
