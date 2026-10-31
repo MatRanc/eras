@@ -34,6 +34,11 @@
   ];
   const now = new Date(), last = now.getUTCFullYear() * 12 + now.getUTCMonth() - 2;
   const first = last - 2 * ARTISTS.length - 2;
+  const day = (idx, d) => Date.UTC(Math.floor(idx / 12), idx % 12, d) / 1000;
+  const firstPlay = day(first, 5), lastPlay = day(last, 20);
+  // joined 14 months before the first scrobble, so a timeline that still starts at the join
+  // date is obvious at a glance (a real account can sit unused even longer than that)
+  const joined = first - 14;
 
   // cached charts would hide edits to this file
   try { for (const k of Object.keys(localStorage)) if (k.startsWith('eras1:_fonts:')) localStorage.removeItem(k); } catch { /* storage blocked: nothing cached */ }
@@ -46,7 +51,14 @@
 
   window.fakeLastfm = (method, p) => {
     if (p.user === '_fonts') {
-      if (method === 'user.getinfo') return { user: { name: '_fonts', playcount: String(total), registered: { unixtime: String(Date.UTC(Math.floor(first / 12), first % 12, 1) / 1000) } } };
+      if (method === 'user.getinfo') return { user: { name: '_fonts', playcount: String(total), registered: { unixtime: String(day(joined, 1)) } } };
+      // historySpan pages newest first: the last page holds the first scrobble, page 1 the last.
+      // the real list is a global calendar (2005 → now), so this one is deliberately per-user
+      if (method === 'user.getrecenttracks') {
+        const uts = p.page && +p.page >= total ? firstPlay : lastPlay;
+        return { recenttracks: { track: [{ name: 'Fake', artist: { '#text': 'Fake' }, date: { uts: String(uts) } }], '@attr': { total: String(total) } } };
+      }
+      if (method === 'user.getweeklychartlist') return { weeklychartlist: { chart: [{ '#text': '', from: String(firstPlay), to: String(Date.now() / 1000) }] } };
       const i = month(p.from);
       if (method === 'user.getweeklyartistchart') return { weeklyartistchart: { artist: playing(i).map(([name, , n]) => ({ name, playcount: String(n) })) } };
       if (method === 'user.getweeklyalbumchart') return { weeklyalbumchart: { album: playing(i).map(([artist, name, n]) => ({ name, artist: { '#text': artist }, playcount: String(n) })) } };

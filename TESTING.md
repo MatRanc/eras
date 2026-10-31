@@ -43,6 +43,17 @@ Genre mode still asks Last.fm for artist tags, so it needs the deployed API key.
 artist modes need no Last.fm account; cover art still comes from Last.fm, and falls back to a
 palette colour if that request fails.
 
+## Timeline range
+
+The timeline runs from the first scrobble or song play to the last one, not from the
+account's join date to today. An account that sat unused for years before its first
+scrobble, or a history that stopped years ago, should not open or close with empty
+months. `?_fonts` is registered 14 months before its first play, so a regression is
+visible locally; `lastfm` stopped scrobbling in 2007.
+
+One quiet bucket between two runs of the same album, artist or genre is merged into a
+single era. Two or more quiet buckets still split it into separate eras.
+
 ## Last.fm request budget
 
 Last.fm limits each visitor IP to 5 requests/s averaged over 5 minutes (~1,500 per

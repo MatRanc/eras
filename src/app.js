@@ -70,14 +70,40 @@ async function pool(items, n, fn) {
   await Promise.all(Array.from({ length: n }, async () => { while (next < items.length) await fn(items[next++]); }));
 }
 
-function monthsSince(unix) {
-  const d = new Date(unix * 1000), now = new Date();
+// every UTC month from `from` to `to`, inclusive, in the shape the charts are keyed by
+function monthsBetween(from, to) {
+  const a = new Date(from * 1000), b = new Date(to * 1000);
   const out = [];
-  for (let idx = d.getUTCFullYear() * 12 + d.getUTCMonth(); idx <= now.getUTCFullYear() * 12 + now.getUTCMonth(); idx++) {
+  const start = a.getUTCFullYear() * 12 + a.getUTCMonth();
+  const end = b.getUTCFullYear() * 12 + b.getUTCMonth();
+  for (let idx = start; idx <= end; idx++) {
     const y = Math.floor(idx / 12), m = idx % 12;
     out.push({ idx, y, m, from: Date.UTC(y, m, 1) / 1000, to: Date.UTC(y, m + 1, 1) / 1000 });
   }
   return out;
+}
+
+// The join date and today say nothing about the listening: an account can sit unused for years
+// before the first scrobble, and a history can stop years before now. user.getweeklychartlist
+// looks like the answer but isn't per user: every account gets the same global week calendar
+// (2005 → this week), so it would still draw the empty years. user.getrecenttracks pages newest
+// first, so its last page is the very first scrobble and its first page the last one: two
+// requests give the real span, and any failure keeps the old registered → now range.
+async function historySpan(user, info) {
+  const now = Date.now() / 1000;
+  const span = { first: +info.registered.unixtime, last: now };
+  const total = +info.playcount;
+  if (!(total > 0)) return span;
+  try {
+    // a now-playing track has no date, so ask for two and keep the newest dated one
+    const dated = async params => [].concat((await call('user.getrecenttracks', { user, ...params })).recenttracks?.track || [])
+      .filter(t => t?.date?.uts);
+    const [oldest, newest] = await Promise.all([dated({ limit: 1, page: total }), dated({ limit: 2 })]);
+    if (oldest[0]) span.first = +oldest[0].date.uts;
+    if (newest[0]) span.last = +newest[0].date.uts;
+  } catch { /* keep registered → now: a failed probe must not abort the pull */ }
+  const first = Math.min(span.first, now);
+  return { first, last: Math.min(Math.max(span.last, first), now) }; // clock skew can't invert the span
 }
 
 async function load(user) {
@@ -85,10 +111,12 @@ async function load(user) {
   artStop(); // a new pull owns the progress bar, even if covers are still arriving
   const info = (await call('user.getinfo', { user })).user;
   if (run !== state.run) return;
+  const { first, last } = await historySpan(info.name, info);
+  if (run !== state.run) return;
   state.source = 'lastfm';
   state.user = info.name;
   state.playcount = +info.playcount;
-  state.months = monthsSince(+info.registered.unixtime);
+  state.months = monthsBetween(first, last);
   state.sel = null;
   const keyOf = (mo, mode) => `${info.name.toLowerCase()}:${mo.y}-${mo.m}${mode === 'artist' ? ':ar' : ''}`;
   // cached months (both kinds) land immediately, so the timeline never blanks while the rest loads
@@ -290,13 +318,17 @@ function addSpotifyRow(r, acc) {
   acc.plays++;
   if (!acc.user && r.username) acc.user = r.username;
   if (t / 1000 < acc.first) acc.first = t / 1000;
+  if (t / 1000 > acc.last) acc.last = t / 1000;
   return true;
 }
 
-// rows → the same { idx, artist, album } shape the Last.fm charts produce
+// rows → the same { idx, artist, album } shape the Last.fm charts produce.
+// an export ends at its last play, not today: a 2019-only export shouldn't draw empty years after it
 function spotifyMonths(acc) {
-  const first = Math.min(acc.first, Date.now() / 1000); // a clock-skewed row shouldn't blank the timeline
-  return monthsSince(first).map(mo => {
+  const now = Date.now() / 1000;
+  const first = Math.min(acc.first, now); // clock-skewed rows shouldn't blank the timeline
+  const last = Math.min(Math.max(acc.last, first), now); // ...or run it into the future
+  return monthsBetween(first, last).map(mo => {
     const m = acc.months.get(mo.idx);
     if (!m) return mo;
     mo.artist = [...m.a].filter(([, p]) => p >= 2).sort((x, y) => y[1] - x[1]).slice(0, 150).map(([a, p]) => ['', a, p]);
@@ -322,7 +354,7 @@ async function loadSpotify(file) {
   const list = audio.length ? audio : entries;
   if (!list.length) throw new Error('That ZIP has no JSON files in it.');
 
-  const acc = { months: new Map(), plays: 0, user: '', first: Infinity };
+  const acc = { months: new Map(), plays: 0, user: '', first: Infinity, last: 0 };
   el.progress.max = list.length;
   let done = 0;
   for (const entry of list) {
