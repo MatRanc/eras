@@ -111,6 +111,12 @@ async function load(user) {
   artStop(); // a new pull owns the progress bar, even if covers are still arriving
   const info = (await call('user.getinfo', { user })).user;
   if (run !== state.run) return;
+  // tags are per artist, but the set fetched for one user includes artists outside the next
+  // user's top 90%: keeping it made a history depend on the tab it was loaded after
+  if (state.source !== 'lastfm' || state.user !== info.name) {
+    state.tags.clear();
+    state.tagsUser = null;
+  }
   const { first, last } = await historySpan(info.name, info);
   if (run !== state.run) return;
   state.source = 'lastfm';
@@ -377,6 +383,9 @@ async function loadSpotify(file) {
 
   state.source = 'spotify';
   state.user = acc.user || 'Spotify';
+  // a Spotify export keeps none of the previous Last.fm user's tag set for the same reason
+  state.tags.clear();
+  state.tagsUser = null;
   state.playcount = acc.plays;
   state.months = spotifyMonths(acc);
   state.sel = null;

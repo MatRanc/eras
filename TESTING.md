@@ -43,6 +43,14 @@ Genre mode still asks Last.fm for artist tags, so it needs the deployed API key.
 artist modes need no Last.fm account; cover art still comes from Last.fm, and falls back to a
 palette colour if that request fails.
 
+## Genre tags
+
+Tags are fetched for the artists behind 90% of the current listener's plays, so the set is
+per listener. Switching users in one tab must give the same eras as loading the second user
+fresh. MatRanc's set tags PinkPantheress; c7po's does not. Leaking the first set into the
+second made c7po's pop era start in March instead of June: her 9 March plays took pop from
+2.4% to 5.03% of the month, just over the bar.
+
 ## Timeline range
 
 The timeline runs from the first scrobble or song play to the last one, not from the
