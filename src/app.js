@@ -522,7 +522,10 @@ function settings() {
 function compute() {
   if (!state.months.length) return;
   const { mode, B, share, lift, ramp, quiet, minLen, perMonth } = settings();
-  const { series, totals, n, base } = buildSeries(mode === 'genre' ? genreMonths(state.months, genreOf) : state.months, B, mode === 'album' ? 'album' : 'artist');
+  const built = buildSeries(mode === 'genre' ? genreMonths(state.months, genreOf) : state.months, B, mode === 'album' ? 'album' : 'artist');
+  const { totals, n, base } = built;
+  // deluxe/remaster/edition releases are the same record: sum them before looking for eras
+  const series = mode === 'album' ? mergeAlbums(built.series) : built.series;
   series.delete(''); // untagged artists' plays, kept only in the totals
   // month buckets trim the ramp at a one-month comeback; coarser buckets already read as gaps
   let eras = detectEras(series, totals, { share, lift, ramp, gap: quiet, minLen, floor: perMonth * B, trim: B === 1 });
@@ -530,7 +533,7 @@ function compute() {
   // genre eras show the biggest albums of the genre's top artists inside the era
   // album charts are always fetched, so they also drive the plays line: same shape in any mode
   const albumSeries = mode === 'album' ? { series, totals } : buildSeries(state.months, B, 'album');
-  const albums = albumSeries.series;
+  const albums = mode === 'album' ? series : mergeAlbums(albumSeries.series);
   const sumIn = (c, e) => { let s = 0; for (let i = e.start; i <= e.end; i++) s += c[i]; return s; };
   const biggest = (map, e, ok) => {
     let best = 0, key;

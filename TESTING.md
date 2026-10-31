@@ -44,6 +44,15 @@ Genre mode still asks Last.fm for artist tags, so it needs the deployed API key.
 artist modes need no Last.fm account; cover art still comes from Last.fm, and falls back to a
 palette colour if that request fails.
 
+## Album editions
+
+Regular, deluxe, remastered and expanded releases of one record are merged before detection
+(`mergeAlbums` in `src/eras.js`), so one album's plays are not split between entries. Only
+edition markers at the end of a bracketed or ` - ` suffix are stripped; live, soundtrack,
+acoustic, instrumental, demo, commentary and EP/single releases stay separate. Merging runs
+on the cached monthly charts, so it needs no refetch. c7po is the case to watch: its regular
+and deluxe splits were hiding the NAV 2026 era until the plays were summed.
+
 ## Genre tags
 
 Tags are fetched for the artists behind 90% of the current listener's plays, so the set is

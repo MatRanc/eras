@@ -1,6 +1,6 @@
 // node test.js
 const assert = require('assert');
-const { SEP, buildSeries, detectEras, assignLanes, genreMonths } = require('./src/eras.js');
+const { SEP, buildSeries, detectEras, assignLanes, genreMonths, albumCore, mergeAlbums } = require('./src/eras.js');
 
 // The Life of Pablo shape: big Oct–Jan, dip to 50 Mar–May, back up Jun–Jul, then gone.
 const pablo = [0, 0, 100, 110, 120, 100, 4, 50, 50, 50, 100, 100, 0, 0];
@@ -82,5 +82,46 @@ const main = new Map([['k-pop', [70, 70, 95, 95, 95, 70, 70, 70]]]), hundred = n
 assert.deepStrictEqual(detectEras(main, hundred, { share: 0.05, floor: 4, lift: 1.4, ramp: false }).map(e => [e.start, e.end]), [[2, 4]]);
 // lift 0 (short histories): the plain share bar, still without the ramp
 assert.deepStrictEqual(detectEras(main, hundred, { share: 0.05, floor: 4, lift: 0, ramp: false }).map(e => [e.start, e.end]), [[0, 7]]);
+
+// Albums: edition markers are stripped so one record is not split between several entries.
+assert.strictEqual(albumCore('Donda (Deluxe)'), 'donda');
+assert.strictEqual(albumCore('DONDA (Deluxe Edition) [Explicit]'), 'donda');
+assert.strictEqual(albumCore('Selected Ambient Works Volume II (Expanded Edition)'), 'selected ambient works volume ii');
+assert.strictEqual(albumCore('Album – 2011 Remaster'), 'album');
+assert.strictEqual(albumCore('Album (Collector’s Edition)'), 'album');
+assert.strictEqual(albumCore('Album (Bonus Track Version)'), 'album');
+// releases that are genuinely different records keep their suffix
+assert.strictEqual(albumCore('Love Deluxe'), 'love deluxe');
+assert.strictEqual(albumCore('Album (Live)'), 'album (live)');
+assert.strictEqual(albumCore('Album (Original Motion Picture Soundtrack)'), 'album (original motion picture soundtrack)');
+assert.strictEqual(albumCore('Album - EP'), 'album - ep');
+assert.strictEqual(albumCore("Album (Taylor's Version)"), "album (taylor's version)");
+
+// Editions merge, plain and live do not; the plain title wins even when the deluxe played more.
+const editions = new Map([
+  ['Kanye West' + SEP + 'Donda', [30, 20, 0]],
+  ['Kanye West' + SEP + 'Donda (Deluxe)', [0, 25, 10]],
+  ['Kanye West' + SEP + 'Donda (Live)', [5, 0, 0]],
+]);
+const mergedEditions = mergeAlbums(editions);
+assert.deepStrictEqual([...mergedEditions.keys()], ['Kanye West' + SEP + 'Donda', 'Kanye West' + SEP + 'Donda (Live)']);
+assert.deepStrictEqual(mergedEditions.get('Kanye West' + SEP + 'Donda'), [30, 45, 10]);
+const deluxeHeavy = new Map([['A' + SEP + 'Album', [1, 0]], ['A' + SEP + 'Album (Deluxe)', [0, 10]]]);
+assert.deepStrictEqual([...mergeAlbums(deluxeHeavy).keys()], ['A' + SEP + 'Album']);
+// spelling-only differences merge too
+const cases = new Map([['A' + SEP + 'Album', [1, 0]], ['A' + SEP + 'ALBUM', [0, 2]]]);
+assert.deepStrictEqual([...mergeAlbums(cases).values()], [[1, 2]]);
+
+// Two editions each under the floor still form one era once summed (the NAV shape).
+const fillers = Array.from({ length: 11 }, (_, i) => ['Filler ' + i, 'Other', 8]);
+const split = [0, 1, 2].map(i => ({
+  idx: 2026 * 12 + i,
+  album: [['OMW2 REXDALE', 'NAV', 6], ['OMW2 REXDALE (DELUXE)', 'NAV', 6], ...fillers],
+}));
+const splitSeries = buildSeries(split, 1, 'album');
+const splitOpts = { share: 0.1, floor: 10, ramp: false };
+assert.strictEqual(detectEras(splitSeries.series, splitSeries.totals, splitOpts).length, 0, 'each edition alone stays under the floor');
+const navEras = detectEras(mergeAlbums(splitSeries.series), splitSeries.totals, splitOpts);
+assert.deepStrictEqual(navEras.map(e => [e.key, e.start, e.end, e.plays]), [['NAV' + SEP + 'OMW2 REXDALE', 0, 2, 36]]);
 
 console.log('ok');

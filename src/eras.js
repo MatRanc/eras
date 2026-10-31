@@ -26,6 +26,61 @@ function buildSeries(months, B, mode) {
   return { series, totals, n, base };
 }
 
+// Album titles carry edition suffixes: "Donda (Deluxe)", "Album [Remastered]", "Album - 2011
+// Remaster". They are the same record, so their series are merged before detection; otherwise
+// one album's plays are split between entries and the era it should form can disappear.
+// Only edition words are stripped. Live, soundtrack, acoustic, instrumental, demo, commentary
+// and EP releases are different records (and "Love Deluxe" is a real title), so they stay apart.
+const EDITION = /\b(?:deluxe|remaster(?:ed|s)?|anniversary|expanded|special edition|collector[’']?s edition|bonus(?: tracks?| version)?|legacy edition|reissue|re-issue|definitive edition|limited edition|platinum edition|gold edition|international edition|japanese edition|japan edition|tour edition|standard edition|explicit|clean)\b/i;
+const NOT_EDITION = /\b(?:live|soundtrack|acoustic|instrumental|demo|commentary|remix(?:es)?|karaoke|a cappella|ep|single)\b/i;
+const TAIL_GROUP = /\s*[\(\[\{]([^\(\)\[\]\{\}]*)[\)\]\}]\s*$/;
+const TAIL_DASH = /\s+[-–—]\s+(.+)$/;
+
+function titleKey(title) {
+  return title.normalize('NFKC').replace(/\s+/g, ' ').trim()
+    .toLowerCase().replace(/[’']/g, "'");
+}
+
+// The title without its edition markers, used to recognise the same record.
+function albumCore(title) {
+  let t = title.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 4; i++) {
+    const g = t.match(TAIL_GROUP);
+    if (g && EDITION.test(g[1]) && !NOT_EDITION.test(g[1])) { t = t.slice(0, g.index).trim(); continue; }
+    const d = t.match(TAIL_DASH);
+    if (d && EDITION.test(d[1]) && !NOT_EDITION.test(d[1])) { t = t.slice(0, d.index).trim(); continue; }
+    break;
+  }
+  return titleKey(t);
+}
+
+// Series keys are artist + SEP + album. Fold editions of one record into one series,
+// keeping the most-played plain title for display (or the most-played edition if every
+// spelling carries a marker). Bucket totals are untouched.
+function mergeAlbums(series) {
+  const groups = new Map();
+  for (const [key, counts] of series) {
+    const at = key.indexOf(SEP);
+    if (at < 0) continue;
+    const artist = key.slice(0, at), album = key.slice(at + 1);
+    const id = artist.toLowerCase() + SEP + albumCore(album);
+    let g = groups.get(id);
+    if (!g) groups.set(id, (g = { artist, counts: new Array(counts.length).fill(0), variants: new Map() }));
+    for (let i = 0; i < counts.length; i++) g.counts[i] += counts[i];
+    g.variants.set(album, (g.variants.get(album) || 0) + counts.reduce((a, b) => a + b, 0));
+  }
+  const out = new Map();
+  for (const g of groups.values()) {
+    let display = '', best = -1, plain = '', plainBest = -1;
+    for (const [album, plays] of g.variants) {
+      if (plays > best) { best = plays; display = album; }
+      if (albumCore(album) === titleKey(album) && plays > plainBest) { plain = album; plainBest = plays; }
+    }
+    out.set(g.artist + SEP + (plain || display), g.counts);
+  }
+  return out;
+}
+
 // An era is a run of buckets where an entity clears both an absolute floor and a share
 // of everything played that bucket. One quiet bucket inside a run doesn't break it,
 // and the run widens to take in the ramp-up/taper (buckets at half the floor).
@@ -114,4 +169,4 @@ function genreMonths(months, genreOf) {
   });
 }
 
-if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, assignLanes, genreMonths };
+if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, assignLanes, genreMonths, albumCore, mergeAlbums };
