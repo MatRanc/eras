@@ -16,7 +16,7 @@ Anyone with a Last.fm account who wants to see the shape of their listening hist
 
 ## Product Purpose
 
-Eras Explorer turns a Last.fm scrobble history into a timeline of "eras": periods where an album or artist dominated listening. Example: The Life of Pablo at ~100 scrobbles/month Oct–Jan 2016, tapering to ~50, then spiking again in summer is one "Life of Pablo era". Success = a user enters their username and instantly recognises their own eras.
+Eras Explorer turns a Last.fm scrobble history, or a Spotify extended streaming history, into a timeline of "eras": periods where an album or artist dominated listening. Example: The Life of Pablo at ~100 scrobbles/month Oct–Jan 2016, tapering to ~50, then spiking again in summer is one "Life of Pablo era". Success = a user enters their username and instantly recognises their own eras.
 
 ## Positioning
 

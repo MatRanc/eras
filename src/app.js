@@ -145,7 +145,7 @@ function finishLoad() {
   compute();
   render();
   centerOn(state.eras[0], 'instant');
-  if (!artWorkers && !artQueue.length) { artBar = false; el.progress.hidden = true; }
+  if (!artWorkers && !artQueue.length) { artBar = false; artTotal = artDone = 0; el.progress.hidden = true; }
 }
 
 // ── genres ──
@@ -244,7 +244,7 @@ async function unzip(file) {
   }
   if (e < 0) throw new Error('That file isn’t a ZIP. Choose the .zip Spotify emailed you.');
   const count = dv.getUint16(e + 10, true), dir = dv.getUint32(e + 16, true);
-  if (count === 0xffff || dir === 0xffffffff) throw new Error('That ZIP is too large for the browser to open. Unzip it and upload the Streaming_History_Audio files instead.');
+  if (count === 0xffff || dir === 0xffffffff) throw new Error('That ZIP is too large for this browser to open. Try again on a desktop browser.');
   const entries = [];
   let o = dir;
   for (let i = 0; i < count; i++) {
@@ -548,15 +548,17 @@ function compute() {
 function wantArt(x) {
   if (!x.album || art.has(x.albumKey)) return;
   art.set(x.albumKey, 'pending');
-  artQueue.push(x);
+  // counted: this job belongs to the batch the bar is showing. gen: the job predates a newer
+  // load, so its late arrival must not move that load's bar.
+  artQueue.push({ era: x, gen: artGen, counted: artBar });
   if (artBar) { artTotal++; artProgress(); }
   drainArt();
 }
 
 const artQueue = [];
-let artWorkers = 0, artTotal = 0, artDone = 0, artBar = false;
+let artWorkers = 0, artTotal = 0, artDone = 0, artBar = false, artGen = 0;
 
-function artStop() { artBar = false; artTotal = artDone = 0; }
+function artStop() { artGen++; artBar = false; artTotal = artDone = 0; }
 
 // Only the batch that follows a load owns the bar: covers fetched later, when a genre era is
 // shown, are one or two at a time and would make it flicker over the status line.
@@ -574,10 +576,11 @@ function artProgress() {
 
 function drainArt() {
   while (artWorkers < 3 && artQueue.length) {
+    const job = artQueue.shift();
     artWorkers++;
-    fetchArt(artQueue.shift()).finally(() => {
+    fetchArt(job.era).finally(() => {
       artWorkers--;
-      if (artBar) {
+      if (artBar && job.counted && job.gen === artGen) {
         artDone++;
         if (!artQueue.length && !artWorkers) {
           artBar = false;
@@ -898,7 +901,10 @@ el.form.addEventListener('submit', async ev => {
         await loadTags(run);
         if (run === state.run) finishLoad();
       } catch {
-        if (run === state.run) say('Last.fm wouldn’t give genre tags right now. Try Genres again in a few minutes.', 'error');
+        if (run === state.run) {
+          el.progress.hidden = true;
+          say('Last.fm wouldn’t give genre tags right now. Try Genres again in a few minutes.', 'error');
+        }
       } finally {
         if (mine === submits) el.go.disabled = false;
       }
