@@ -188,6 +188,7 @@ const old = tally([
 const oldMonths = spotifyMonths(old);
 assert.strictEqual(oldMonths.length, 12);
 assert.deepStrictEqual([oldMonths[0].idx, oldMonths[11].idx], [2019 * 12, 2019 * 12 + 11]);
+assert.deepStrictEqual([oldMonths[1].artist, oldMonths[1].album], [[], []], 'silent months have empty artist and album lists');
 // artists need two plays to chart; albums come back as [album, artist, plays]
 const two = tally([play(), play({ ts: '2024-01-02T12:00:00Z' })]);
 const twoMonths = spotifyMonths(two);

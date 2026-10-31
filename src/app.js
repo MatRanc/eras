@@ -481,7 +481,7 @@ function compute() {
     // only months with artist charts, as genreMonths counts them (no estimate from album charts)
     const byGenre = groupBy(buildSeries(state.months.map(m => (m.artist ? m : { idx: m.idx })), B, 'artist').series, ([a]) => genreOf(a));
     eras = dropSingleArtist(eras.map(e => ({
-      ...e, artists: byGenre.get(e.key).map(([a, c]) => [a, sumIn(c, e)]).filter(([, p]) => p).sort((a, b) => b[1] - a[1]),
+      ...e, artists: (byGenre.get(e.key) || []).map(([a, c]) => [a, sumIn(c, e)]).filter(([, p]) => p).sort((a, b) => b[1] - a[1]),
     })));
   }
   eras = eras.slice(0, MAX_ERAS);
@@ -533,7 +533,15 @@ function wantArt(x) {
 const artQueue = [];
 let artWorkers = 0, artTotal = 0, artDone = 0, artBar = false, artGen = 0;
 
-function artStop() { artGen++; artBar = false; artTotal = artDone = 0; }
+function artStop() {
+  artGen++;
+  artBar = false;
+  artTotal = artDone = 0;
+  for (const job of artQueue) {
+    if (art.get(job.era.albumKey) === 'pending') art.delete(job.era.albumKey);
+  }
+  artQueue.length = 0;
+}
 
 // Only the batch that follows a load owns the bar: covers fetched later, when a genre era is
 // shown, are one or two at a time and would make it flicker over the status line.

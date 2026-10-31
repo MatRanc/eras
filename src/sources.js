@@ -90,7 +90,7 @@ function spotifyMonths(acc) {
   const last = Math.min(Math.max(acc.last, first), now); // ...or run it into the future
   return monthsBetween(first, last).map(mo => {
     const m = acc.months.get(mo.idx);
-    if (!m) return mo;
+    if (!m) { mo.artist = []; mo.album = []; return mo; }
     mo.artist = [...m.a].filter(([, p]) => p >= 2).sort((x, y) => y[1] - x[1]).slice(0, 150).map(([a, p]) => ['', a, p]);
     mo.album = [...m.b].filter(([, p]) => p >= 2).sort((x, y) => y[1] - x[1]).slice(0, 150)
       .map(([k, p]) => { const i = k.indexOf(ALBUM_SEP); return [k.slice(i + 1), k.slice(0, i), p]; });
