@@ -50,6 +50,27 @@ const dips = new Map([['x', [20, 0, 0, 20, 20, 0, 0, 0, 20, 0]]]), flat = new Ar
 assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, ramp: false, gap: 2 }).map(e => [e.start, e.end]), [[0, 4]]);
 assert.deepStrictEqual(detectEras(dips, flat, { share: 0.1, floor: 10, lift: 1, ramp: false, gap: 2, minLen: 6 }), []);
 
+// merging: one quiet bucket between two runs of the same key is still one era
+const one = new Map([['x', [20, 20, 20, 0, 6, 20, 20]]]), flat7 = new Array(7).fill(100);
+const oneEra = detectEras(one, flat7, { share: 0.1, floor: 10, ramp: true, gap: 1 });
+assert.strictEqual(oneEra.length, 1, 'one quiet bucket should not split same-key runs');
+assert.deepStrictEqual([oneEra[0].start, oneEra[0].end, oneEra[0].plays, oneEra[0].peak, oneEra[0].peakAt], [0, 6, 106, 20, 0]);
+assert.deepStrictEqual(oneEra[0].counts, [20, 20, 20, 0, 6, 20, 20]);
+
+// the quiet bucket between runs still contributes its plays
+const gp = detectEras(new Map([['x', [20, 20, 20, 4, 6, 20, 20]]]), flat7, { share: 0.1, floor: 10, ramp: true, gap: 1 });
+assert.strictEqual(gp.length, 1);
+assert.deepStrictEqual([gp[0].start, gp[0].end, gp[0].plays], [0, 6, 110], 'the bucket between the runs still counts');
+
+// two quiet buckets apart is still two eras
+const two = new Map([['x', [20, 20, 20, 0, 0, 20, 20]]]);
+assert.deepStrictEqual(detectEras(two, flat7, { share: 0.1, floor: 10, ramp: true, gap: 1 }).map(e => [e.start, e.end]), [[0, 2], [5, 6]]);
+
+// a chain of runs with one-bucket gaps collapses to a single era
+const ch = detectEras(new Map([['x', [20, 20, 20, 0, 6, 20, 20, 0, 6, 20, 20]]]), new Array(11).fill(100), { share: 0.1, floor: 10, ramp: true, gap: 1 });
+assert.strictEqual(ch.length, 1);
+assert.deepStrictEqual([ch[0].start, ch[0].end, ch[0].plays, ch[0].peak, ch[0].peakAt], [0, 10, 152, 20, 0]);
+
 // The bar stops 10 points over the usual share: a genre at 75% overall can still run at 90%+.
 const main = new Map([['k-pop', [70, 70, 95, 95, 95, 70, 70, 70]]]), hundred = new Array(8).fill(100);
 assert.deepStrictEqual(detectEras(main, hundred, { share: 0.05, floor: 4, lift: 1.4, ramp: false }).map(e => [e.start, e.end]), [[2, 4]]);

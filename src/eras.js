@@ -42,6 +42,7 @@ function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxG
     const usual = c.reduce((a, b) => a + b, 0) / all;
     const bar = lift ? Math.max(share, Math.min(lift * usual, usual + 0.1)) : share;
     const hot = i => c[i] >= floor && c[i] >= bar * totals[i];
+    const runs = [];
     let i = 0;
     while (i < n) {
       if (!hot(i)) { i++; continue; }
@@ -57,10 +58,29 @@ function detectEras(series, totals, { share, floor, lift, ramp = true, gap: maxG
       const plays = counts.reduce((a, b) => a + b, 0);
       if (plays >= floor * 3 && counts.length >= minLen) {
         const pk = counts.indexOf(Math.max(...counts));
-        eras.push({ key, start: s, end: e, counts, plays, peak: counts[pk], peakAt: s + pk });
+        runs.push({ key, start: s, end: e, counts, plays, peak: counts[pk], peakAt: s + pk });
       }
       i = e + 1;
     }
+    // the scan breaks a run after maxGap quiet buckets, then the ramp can absorb the one
+    // next to the following run, leaving a single bucket between two runs of the same key.
+    // join those: one pause is not two eras, at any bucket size.
+    const merged = [];
+    for (const r of runs) {
+      const prev = merged[merged.length - 1];
+      if (prev && r.start <= prev.end + 2) {
+        prev.end = r.end;
+        // recompute from the full series so the quiet bucket's plays and the peak stay true
+        prev.counts = c.slice(prev.start, prev.end + 1);
+        prev.plays = prev.counts.reduce((a, b) => a + b, 0);
+        const pk = prev.counts.indexOf(Math.max(...prev.counts));
+        prev.peak = prev.counts[pk];
+        prev.peakAt = prev.start + pk;
+      } else {
+        merged.push(r);
+      }
+    }
+    eras.push(...merged);
   }
   return eras.sort((a, b) => b.plays - a.plays);
 }
