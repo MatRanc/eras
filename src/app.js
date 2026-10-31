@@ -306,14 +306,23 @@ async function inflate(entry) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-// one stream row → its month's artist and album tallies; false when it isn't a song play
-function addSpotifyRow(r, acc) {
+// one stream row → its month's artist and album tallies; false when it isn't a song play.
+// Multi-device playback can log the same stream twice: identical timestamp, track and played
+// length are one play. The key keeps the track name and artist as well as the URI, because a
+// URI can be missing or (in malformed exports) shared by unrelated tracks.
+function addSpotifyRow(r, acc, seen) {
   // songs only: podcasts, audiobooks and videos carry episode/audiobook fields
   if (!r?.master_metadata_track_name || !r.master_metadata_album_artist_name) return false;
   if (r.episode_name || r.episode_show_name || r.spotify_episode_uri || r.audiobook_title || r.audiobook_chapter_title) return false;
   if (!(+r.ms_played >= PLAY_MS)) return false;
   const t = Date.parse(r.ts);
   if (Number.isNaN(t)) return false;
+  if (seen) {
+    const key = [r.ts, r.spotify_track_uri || '', +r.ms_played,
+      r.master_metadata_track_name, r.master_metadata_album_artist_name].join('\u001f');
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
   const d = new Date(t), idx = d.getUTCFullYear() * 12 + d.getUTCMonth();
   let m = acc.months.get(idx);
   if (!m) acc.months.set(idx, m = { a: new Map(), b: new Map() });
@@ -374,7 +383,12 @@ async function loadSpotify(file) {
       if (run !== state.run) return;
       throw new Error(`Couldn’t read ${entry.name}. The download may be incomplete; try exporting again.`);
     }
-    if (Array.isArray(rows)) for (const r of rows) addSpotifyRow(r, acc);
+    if (Array.isArray(rows)) {
+      // duplicates only ever appear within one export file, so the set is per file: the biggest
+      // real file holds ~8k keys (a few hundred KB) and it is released before the next file.
+      const seen = new Set();
+      for (const r of rows) addSpotifyRow(r, acc, seen);
+    }
     done++;
     el.progress.value = done;
   }

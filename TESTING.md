@@ -34,6 +34,7 @@ What to check:
 |---|---|
 | Song stream ≥ 30s | Counts once, credited to the album artist and album |
 | Song stream < 30s | Ignored |
+| The same stream logged twice (same `ts`, track, artist and `ms_played`, e.g. from two devices) | Counts once; the dedupe set is per file and is dropped between files |
 | Podcast, audiobook or video | Ignored (episode/audiobook fields, or a `Streaming_History_Video` file) |
 | `ms_played` 42s with `skipped: true` | Still counts: without track duration the 30s rule is the only test |
 | Single with no album name | Counts toward the artist, not the album chart |
