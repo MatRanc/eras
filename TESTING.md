@@ -13,6 +13,7 @@ Real histories that show off (or break) era detection. Open any of them with
 | sterlingrey | | Hand-tested across modes |
 | FlipperDolphinn | K-pop, 8 years | One genre is ~47% of everything: needs the cap on the genre bar, or the main phase splits into slivers |
 | leonmasselink | Dutch, 2005–, 266k plays | Very long history: hits the 40-era cap, worst case for request counts |
+| robert | 2005–2016, 27k plays | 140 months on one long arc, so the timeline always overflows: checks the right gutter at the end of the scroll |
 | MoloT_xD | Russian rock/metal, 2014–, 550k plays | Power metal 2024–26; Cyrillic labels |
 | redherring22 | Folk metal → indie | Long arc; Ween tagged "experimental" (one-artist eras) |
 | katora- | Noise/grind, 4 years | Very niche genres that overlap (goregrind, gorenoise) |
