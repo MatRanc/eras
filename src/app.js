@@ -70,42 +70,6 @@ async function pool(items, n, fn) {
   await Promise.all(Array.from({ length: n }, async () => { while (next < items.length) await fn(items[next++]); }));
 }
 
-// every UTC month from `from` to `to`, inclusive, in the shape the charts are keyed by
-function monthsBetween(from, to) {
-  const a = new Date(from * 1000), b = new Date(to * 1000);
-  const out = [];
-  const start = a.getUTCFullYear() * 12 + a.getUTCMonth();
-  const end = b.getUTCFullYear() * 12 + b.getUTCMonth();
-  for (let idx = start; idx <= end; idx++) {
-    const y = Math.floor(idx / 12), m = idx % 12;
-    out.push({ idx, y, m, from: Date.UTC(y, m, 1) / 1000, to: Date.UTC(y, m + 1, 1) / 1000 });
-  }
-  return out;
-}
-
-// The join date and today say nothing about the listening: an account can sit unused for years
-// before the first scrobble, and a history can stop years before now. user.getweeklychartlist
-// looks like the answer but isn't per user: every account gets the same global week calendar
-// (2005 → this week), so it would still draw the empty years. user.getrecenttracks pages newest
-// first, so its last page is the very first scrobble and its first page the last one: two
-// requests give the real span, and any failure keeps the old registered → now range.
-async function historySpan(user, info) {
-  const now = Date.now() / 1000;
-  const span = { first: +info.registered.unixtime, last: now };
-  const total = +info.playcount;
-  if (!(total > 0)) return span;
-  try {
-    // a now-playing track has no date, so ask for two and keep the newest dated one
-    const dated = async params => [].concat((await call('user.getrecenttracks', { user, ...params })).recenttracks?.track || [])
-      .filter(t => t?.date?.uts);
-    const [oldest, newest] = await Promise.all([dated({ limit: 1, page: total }), dated({ limit: 2 })]);
-    if (oldest[0]) span.first = +oldest[0].date.uts;
-    if (newest[0]) span.last = +newest[0].date.uts;
-  } catch { /* keep registered → now: a failed probe must not abort the pull */ }
-  const first = Math.min(span.first, now);
-  return { first, last: Math.min(Math.max(span.last, first), now) }; // clock skew can't invert the span
-}
-
 async function load(user) {
   const run = ++state.run;
   artStop(); // a new pull owns the progress bar, even if covers are still arriving
@@ -117,7 +81,7 @@ async function load(user) {
     state.tags.clear();
     state.tagsUser = null;
   }
-  const { first, last } = await historySpan(info.name, info);
+  const { first, last } = await historySpan(info, call);
   if (run !== state.run) return;
   state.source = 'lastfm';
   state.user = info.name;
@@ -262,11 +226,9 @@ function genreOf(artist) {
 }
 
 // ── Spotify extended streaming history ──
-// The export is a ZIP of JSON files, one row per stream. It is read here, in the browser:
-// nothing is uploaded anywhere. A stream counts as a play at 30 seconds, close to Last.fm's
-// rule, and podcasts, audiobooks and videos are ignored so only songs shape the eras.
+// The ZIP is opened here, in the browser: nothing is uploaded anywhere. The row rules and the
+// month tallies live in sources.js, where test.js can reach them.
 // ponytail: whole files are parsed at once; stream the JSON if exports ever outgrow a desktop tab.
-const PLAY_MS = 30000;
 const decoder = new TextDecoder();
 
 async function unzip(file) {
@@ -304,53 +266,6 @@ async function inflate(entry) {
   if (typeof DecompressionStream === 'undefined') throw new Error('This browser can’t unzip files. Try a recent Chrome, Safari or Firefox.');
   const stream = new Blob([entry.raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-// one stream row → its month's artist and album tallies; false when it isn't a song play.
-// Multi-device playback can log the same stream twice: identical timestamp, track and played
-// length are one play. The key keeps the track name and artist as well as the URI, because a
-// URI can be missing or (in malformed exports) shared by unrelated tracks.
-function addSpotifyRow(r, acc, seen) {
-  // songs only: podcasts, audiobooks and videos carry episode/audiobook fields
-  if (!r?.master_metadata_track_name || !r.master_metadata_album_artist_name) return false;
-  if (r.episode_name || r.episode_show_name || r.spotify_episode_uri || r.audiobook_title || r.audiobook_chapter_title) return false;
-  if (!(+r.ms_played >= PLAY_MS)) return false;
-  const t = Date.parse(r.ts);
-  if (Number.isNaN(t)) return false;
-  if (seen) {
-    const key = [r.ts, r.spotify_track_uri || '', +r.ms_played,
-      r.master_metadata_track_name, r.master_metadata_album_artist_name].join('\u001f');
-    if (seen.has(key)) return false;
-    seen.add(key);
-  }
-  const d = new Date(t), idx = d.getUTCFullYear() * 12 + d.getUTCMonth();
-  let m = acc.months.get(idx);
-  if (!m) acc.months.set(idx, m = { a: new Map(), b: new Map() });
-  const artist = r.master_metadata_album_artist_name;
-  m.a.set(artist, (m.a.get(artist) || 0) + 1);
-  const album = r.master_metadata_album_album_name;
-  if (album) m.b.set(artist + SEP + album, (m.b.get(artist + SEP + album) || 0) + 1);
-  acc.plays++;
-  if (!acc.user && r.username) acc.user = r.username;
-  if (t / 1000 < acc.first) acc.first = t / 1000;
-  if (t / 1000 > acc.last) acc.last = t / 1000;
-  return true;
-}
-
-// rows → the same { idx, artist, album } shape the Last.fm charts produce.
-// an export ends at its last play, not today: a 2019-only export shouldn't draw empty years after it
-function spotifyMonths(acc) {
-  const now = Date.now() / 1000;
-  const first = Math.min(acc.first, now); // clock-skewed rows shouldn't blank the timeline
-  const last = Math.min(Math.max(acc.last, first), now); // ...or run it into the future
-  return monthsBetween(first, last).map(mo => {
-    const m = acc.months.get(mo.idx);
-    if (!m) return mo;
-    mo.artist = [...m.a].filter(([, p]) => p >= 2).sort((x, y) => y[1] - x[1]).slice(0, 150).map(([a, p]) => ['', a, p]);
-    mo.album = [...m.b].filter(([, p]) => p >= 2).sort((x, y) => y[1] - x[1]).slice(0, 150)
-      .map(([k, p]) => { const i = k.indexOf(SEP); return [k.slice(i + 1), k.slice(0, i), p]; });
-    return mo;
-  });
 }
 
 async function loadSpotify(file) {
@@ -565,9 +480,9 @@ function compute() {
     // Yung Lean, Ecco2K and Woesum were behind it, and it vanished from genre mode.
     // only months with artist charts, as genreMonths counts them (no estimate from album charts)
     const byGenre = groupBy(buildSeries(state.months.map(m => (m.artist ? m : { idx: m.idx })), B, 'artist').series, ([a]) => genreOf(a));
-    eras = eras.map(e => ({
+    eras = dropSingleArtist(eras.map(e => ({
       ...e, artists: byGenre.get(e.key).map(([a, c]) => [a, sumIn(c, e)]).filter(([, p]) => p).sort((a, b) => b[1] - a[1]),
-    })).filter(e => e.artists[0][1] < 0.85 * e.plays);
+    })));
   }
   eras = eras.slice(0, MAX_ERAS);
   const all = totals.reduce((a, b) => a + b, 0);

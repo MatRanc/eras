@@ -81,6 +81,13 @@ function mergeAlbums(series) {
   return out;
 }
 
+// Genre mode keeps only the eras that more than one artist carries: one artist owning `share`
+// of an era's plays is just artist mode again, so it is dropped. 0.85, not 0.8: cloud rap in
+// 2021–22 was 80.3% Bladee, but Yung Lean, Ecco2K and Woesum were behind it.
+function dropSingleArtist(eras, share = 0.85) {
+  return eras.filter(e => !e.artists?.length || e.artists[0][1] < share * e.plays);
+}
+
 // An era is a run of buckets where an entity clears both an absolute floor and a share
 // of everything played that bucket. One quiet bucket inside a run doesn't break it,
 // and the run widens to take in the ramp-up/taper (buckets at half the floor).
@@ -169,4 +176,4 @@ function genreMonths(months, genreOf) {
   });
 }
 
-if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, assignLanes, genreMonths, albumCore, mergeAlbums };
+if (typeof module !== 'undefined') module.exports = { SEP, buildSeries, detectEras, assignLanes, genreMonths, albumCore, mergeAlbums, dropSingleArtist };

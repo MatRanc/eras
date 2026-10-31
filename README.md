@@ -19,7 +19,7 @@ echo 'window.LASTFM_KEY = "your-key";' > src/config.js   # gitignored
 cd src && python3 -m http.server 8642
 ```
 
-Open http://localhost:8642. Test the era logic with `node test.js`.
+Open http://localhost:8642. Test the era logic and the source adapters with `node test.js`.
 
 ## Deploy
 

@@ -1,6 +1,7 @@
 // node test.js
 const assert = require('assert');
-const { SEP, buildSeries, detectEras, assignLanes, genreMonths, albumCore, mergeAlbums } = require('./src/eras.js');
+const { SEP, buildSeries, detectEras, assignLanes, genreMonths, albumCore, mergeAlbums, dropSingleArtist } = require('./src/eras.js');
+const { monthsBetween, historySpan, streamKey, addSpotifyRow, spotifyMonths } = require('./src/sources.js');
 
 // The Life of Pablo shape: big Oct–Jan, dip to 50 Mar–May, back up Jun–Jul, then gone.
 const pablo = [0, 0, 100, 110, 120, 100, 4, 50, 50, 50, 100, 100, 0, 0];
@@ -124,4 +125,113 @@ assert.strictEqual(detectEras(splitSeries.series, splitSeries.totals, splitOpts)
 const navEras = detectEras(mergeAlbums(splitSeries.series), splitSeries.totals, splitOpts);
 assert.deepStrictEqual(navEras.map(e => [e.key, e.start, e.end, e.plays]), [['NAV' + SEP + 'OMW2 REXDALE', 0, 2, 36]]);
 
-console.log('ok');
+// Genre mode drops an era one artist owns: an artist at 85% or more of an era's plays is
+// artist mode again, one at 80% still has a second artist behind it.
+const genreEras = [
+  { plays: 100, artists: [['A', 80], ['B', 20]] },
+  { plays: 100, artists: [['A', 90], ['B', 10]] },
+  { plays: 100, artists: [['A', 85]] },
+];
+assert.deepStrictEqual(dropSingleArtist(genreEras).map(e => e.artists[0][1]), [80]);
+
+// Months: inclusive UTC calendar months in the shape the charts are keyed by.
+const span = monthsBetween(Date.UTC(2023, 11, 31) / 1000, Date.UTC(2024, 1, 1) / 1000);
+assert.deepStrictEqual(span.map(m => [m.y, m.m]), [[2023, 11], [2024, 0], [2024, 1]]);
+assert.deepStrictEqual(span.map(m => m.idx), [2023 * 12 + 11, 2024 * 12, 2024 * 12 + 1]);
+assert.strictEqual(span[0].from, Date.UTC(2023, 11, 1) / 1000);
+assert.strictEqual(monthsBetween(Date.UTC(2024, 4, 9) / 1000, Date.UTC(2024, 4, 20) / 1000).length, 1);
+
+// Spotify rows: a play is a song stream of 30s or more; podcasts, audiobooks and broken rows
+// are ignored. A skipped 42s stream still counts: without a track duration, 30s is the rule.
+const play = (o = {}) => ({
+  ts: '2024-01-01T12:00:00Z', username: 'spot', platform: 'iOS', ms_played: 200000,
+  master_metadata_track_name: 'A', master_metadata_album_artist_name: 'X',
+  master_metadata_album_album_name: 'XA', spotify_track_uri: 'spotify:track:a', ...o,
+});
+const tally = rows => {
+  const acc = { months: new Map(), plays: 0, user: '', first: Infinity, last: 0 };
+  const seen = new Set();
+  for (const r of rows) addSpotifyRow(r, acc, seen);
+  return acc;
+};
+assert.strictEqual(tally([play({ ms_played: 29999 })]).plays, 0);
+assert.strictEqual(tally([play({ ms_played: 30000 })]).plays, 1);
+assert.strictEqual(tally([play({ skipped: true, ms_played: 42000 })]).plays, 1);
+assert.strictEqual(tally([play({ episode_name: 'Ep 1' })]).plays, 0);
+assert.strictEqual(tally([play({ audiobook_title: 'Book' })]).plays, 0);
+assert.strictEqual(tally([play({ master_metadata_track_name: null })]).plays, 0);
+assert.strictEqual(tally([play({ ts: 'not a date' })]).plays, 0);
+
+// A single with no album counts toward the artist, not the album chart.
+const single = tally([play({ master_metadata_album_album_name: null })]);
+assert.strictEqual(single.plays, 1);
+assert.deepStrictEqual([...single.months.get(2024 * 12).a], [['X', 1]]);
+assert.strictEqual(single.months.get(2024 * 12).b.size, 0);
+assert.strictEqual(single.user, 'spot');
+
+// The same stream logged twice counts once; a different track, artist or length is a real
+// second play. Malformed exports share one fake URI, so the track keeps those rows apart.
+assert.strictEqual(tally([play(), play()]).plays, 1);
+assert.strictEqual(tally([play(), play({ master_metadata_track_name: 'B' })]).plays, 2);
+assert.strictEqual(tally([play(), play({ master_metadata_album_artist_name: 'Y' })]).plays, 2);
+assert.strictEqual(tally([play(), play({ ms_played: 210000 })]).plays, 2);
+assert.strictEqual(tally([play(), play({ master_metadata_track_name: 'B' }), play({ master_metadata_track_name: 'C' })]).plays, 3);
+assert.strictEqual(streamKey(play()), streamKey(play()));
+assert.notStrictEqual(streamKey(play()), streamKey(play({ ms_played: 210000 })));
+
+// An export spans its own first and last play, not today.
+const old = tally([
+  play({ ts: '2019-01-05T12:00:00Z' }),
+  play({ ts: '2019-03-05T12:00:00Z', master_metadata_track_name: 'B' }),
+  play({ ts: '2019-12-31T23:00:00Z', master_metadata_track_name: 'C' }),
+]);
+const oldMonths = spotifyMonths(old);
+assert.strictEqual(oldMonths.length, 12);
+assert.deepStrictEqual([oldMonths[0].idx, oldMonths[11].idx], [2019 * 12, 2019 * 12 + 11]);
+// artists need two plays to chart; albums come back as [album, artist, plays]
+const two = tally([play(), play({ ts: '2024-01-02T12:00:00Z' })]);
+const twoMonths = spotifyMonths(two);
+assert.deepStrictEqual(twoMonths[0].artist, [['', 'X', 2]]);
+assert.deepStrictEqual(twoMonths[0].album, [['XA', 'X', 2]]);
+// a row in the future can't run the timeline past this month
+const future = spotifyMonths(tally([play({ ts: '2999-01-01T00:00:00Z' })]));
+const nowDate = new Date();
+assert.deepStrictEqual([future.length, future[0].y, future[0].m], [1, nowDate.getUTCFullYear(), nowDate.getUTCMonth()]);
+
+// Last.fm history span: the last recent-tracks page holds the first scrobble and page 1 the
+// last one. An undated now-playing row is skipped, and a failed probe keeps its fallback.
+const dated = uts => ({ recenttracks: { track: [{ date: { uts: String(uts) } }] } });
+const listener = { name: 'listener', playcount: '7', registered: { unixtime: '1000' } };
+const newer = { recenttracks: { track: [{ name: 'Now playing' }, { date: { uts: '1900' } }] } };
+const asked = [];
+(async () => {
+  const call = async (method, p) => {
+    asked.push([method, p.user, p.limit, p.page]);
+    return p.limit === 1 ? dated(1500) : newer;
+  };
+  assert.deepStrictEqual(await historySpan(listener, call).then(s => [s.first, s.last]), [1500, 1900]);
+  const pages = asked.map(([, u, limit, page]) => [u, limit, page ?? 1]).sort((a, b) => b[2] - a[2]);
+  assert.deepStrictEqual(pages, [['listener', 1, 7], ['listener', 2, 1]]);
+
+  // an empty last page falls back to the join date; the newest scrobble still lands
+  const empty = async (method, p) => (p.limit === 1 ? { recenttracks: { track: [] } } : dated(1900));
+  assert.deepStrictEqual(await historySpan(listener, empty).then(s => [s.first, s.last]), [1000, 1900]);
+
+  // a failed probe must not abort: registered → now
+  const boom = async () => { throw new Error('error 29'); };
+  const fallback = await historySpan(listener, boom);
+  assert.strictEqual(fallback.first, 1000);
+  assert.ok(Math.abs(fallback.last - Date.now() / 1000) < 5, 'failed probe ends at now');
+
+  // clock skew can't invert the span: the last play is never before the first
+  const inverted = async (method, p) => dated(p.limit === 1 ? 1900 : 1500);
+  assert.deepStrictEqual(await historySpan(listener, inverted).then(s => [s.first, s.last]), [1900, 1900]);
+
+  // an empty account makes no probe at all
+  let probes = 0;
+  const none = await historySpan({ ...listener, playcount: '0' }, async () => { probes++; });
+  assert.strictEqual(probes, 0);
+  assert.strictEqual(none.first, 1000);
+
+  console.log('ok');
+})().catch(e => { console.error(e); process.exit(1); });
