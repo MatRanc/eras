@@ -274,9 +274,11 @@ progress::-moz-progress-bar { background: var(--paper); }
 /* ── Timeline ───────────────────────────────────────── */
 .timeline-wrap {
   overflow-x: auto;
-  padding: 20px var(--gutter) 28px;
+  /* right padding lives on .timeline: Chromium drops a scroll container's own end padding */
+  padding: 20px 0 28px var(--gutter);
   scrollbar-color: var(--rule) transparent;
 }
+.timeline { width: max-content; padding-right: var(--gutter); }
 .timeline svg { display: block; overflow: visible; }
 .timeline .year { font: 400 20px/1 var(--display); fill: var(--paper); letter-spacing: .02em; }
 .timeline .tick { stroke: var(--rule); }

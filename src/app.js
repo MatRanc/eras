@@ -664,7 +664,10 @@ function render() {
   el.form.classList.add('loaded'); // view settings appear once there is something to view
   const LABEL = 22, BAND = 6, BARS = 46, AXIS = 48, LANE = LABEL + BAND + BARS, GAP = 14;
   const wrap = el.timeline.parentElement;
-  const wrapW = wrap.clientWidth - 2 * parseFloat(getComputedStyle(wrap).paddingLeft);
+  const pad = getComputedStyle(wrap);
+  // the right gutter is padding on .timeline, so it is part of the scrollable content
+  const wrapW = wrap.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight)
+    - parseFloat(getComputedStyle(el.timeline).paddingRight);
   const minW = view.B === 1 ? 14 : 18, w = Math.min(120, Math.max(minW, wrapW / view.n));
   // labels sit above their slab and may run past it, so a lane reserves the label's width too,
   // sized at the narrowest bucket so lanes don't reshuffle when the window or zoom changes
