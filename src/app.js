@@ -534,13 +534,14 @@ function compute() {
   };
   const albumOf = (artist, e) => { const k = biggest(albums, e, k => k.startsWith(artist + SEP)); return k && k.slice(artist.length + 1); };
   if (mode === 'genre') {
-    // who played each era, biggest first. Eras one artist carries (≥80% of plays) only repeat
-    // artist mode, so drop them
+    // who played each era, biggest first. Eras one artist carries (≥85% of plays) only repeat
+    // artist mode, so drop them. 80% was too eager: cloud rap 2021–22 was 80.3% Bladee but
+    // Yung Lean, Ecco2K and Woesum were behind it, and it vanished from genre mode.
     // only months with artist charts, as genreMonths counts them (no estimate from album charts)
     const byGenre = groupBy(buildSeries(state.months.map(m => (m.artist ? m : { idx: m.idx })), B, 'artist').series, ([a]) => genreOf(a));
     eras = eras.map(e => ({
       ...e, artists: byGenre.get(e.key).map(([a, c]) => [a, sumIn(c, e)]).filter(([, p]) => p).sort((a, b) => b[1] - a[1]),
-    })).filter(e => e.artists[0][1] < 0.8 * e.plays);
+    })).filter(e => e.artists[0][1] < 0.85 * e.plays);
   }
   eras = eras.slice(0, MAX_ERAS);
   const all = totals.reduce((a, b) => a + b, 0);
